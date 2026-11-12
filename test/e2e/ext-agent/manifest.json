@@ -1,0 +1,5 @@
+{ "manifest_version": 3, "name": "overlay-agent-probe", "version": "1.0",
+  "description": "Test fixture: draws agent-style highlight overlays like an AI browser extension (no actions).",
+  "content_scripts": [
+    { "matches": ["http://127.0.0.1/*"], "js": ["isolated.js"], "run_at": "document_idle" },
+    { "matches": ["http://127.0.0.1/*"], "js": ["main.js"], "run_at": "document_idle", "world": "MAIN" } ] }

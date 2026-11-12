@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harbor Demo Bank — agent-detect demo</title>
+<style>
+  :root { --bg:#f6f5f2; --card:#fff; --ink:#1d2329; --muted:#5f6b76; --line:#e2e0da; --accent:#1f5f8b; --ok:#2e7d4f; --warn:#b26a00; --bad:#b3261e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); background:var(--card); display:flex; justify-content:space-between; align-items:center; }
+  header b { font-size:17px; } header span { color:var(--muted); font-size:13px; }
+  main { max-width:1100px; margin:24px auto; padding:0 16px; display:grid; grid-template-columns: 1fr 360px; gap:20px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:20px; margin-bottom:20px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 4px; }
+  input, select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; }
+  button { margin-top:16px; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button.secondary { background:#e9eef2; color:var(--ink); }
+  .balance { font-size:28px; font-weight:600; }
+  .row { display:flex; gap:12px; } .row > * { flex:1; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  td { padding:8px 0; border-bottom:1px solid var(--line); } td:last-child { text-align:right; }
+  #panel h2 { display:flex; justify-content:space-between; }
+  .pill { font-size:12px; padding:2px 10px; border-radius:20px; background:#eee; }
+  .pill.human { background:#e3f1e8; color:var(--ok); } .pill.suspect { background:#fdf0dc; color:var(--warn); }
+  .pill.agent { background:#fbe4e2; color:var(--bad); } .pill.unknown { background:#eceff1; color:var(--muted); }
+  #reasons { font-size:12px; color:var(--muted); padding-left:18px; } #reasons li { margin-bottom:6px; }
+  #reasons code { color:var(--ink); }
+  #result { font-size:14px; margin-top:12px; min-height:20px; }
+  .stat { display:flex; justify-content:space-between; font-size:13px; color:var(--muted); }
+  .stat b { color:var(--ink); font-weight:600; }
+</style>
+</head>
+<body>
+<header><b>Harbor Demo Bank</b><span>fictional — agent-detect demo</span></header>
+<main>
+  <div id="app">
+    <section class="card">
+      <h2>Checking ••4821</h2>
+      <div class="balance">$12,480.33</div>
+      <button class="secondary" id="viewBalance">Refresh balance</button>
+    </section>
+
+    <section class="card">
+      <h2>Send money</h2>
+      <form id="transfer">
+        <label for="payee">Payee</label>
+        <select id="payee"><option>Choose payee</option><option>J. Rivera — ••2290</option><option>City Utilities — ••0042</option><option>Landlord LLC — ••7731</option></select>
+        <div class="row">
+          <div><label for="amount">Amount (USD)</label><input id="amount" inputmode="decimal" autocomplete="off" placeholder="0.00"></div>
+          <div><label for="when">Date</label><input id="when" placeholder="MM/DD/YYYY" autocomplete="off"></div>
+        </div>
+        <label for="memo">Memo</label>
+        <input id="memo" autocomplete="off" placeholder="What's this for?">
+        <button type="submit" id="send">Review &amp; send</button>
+        <div id="result"></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Recent activity</h2>
+      <table id="activity"></table>
+    </section>
+  </div>
+
+  <aside id="panel">
+    <section class="card">
+      <h2>Session check <span id="verdict" class="pill unknown">unknown</span></h2>
+      <div class="stat"><span>Local score (debug)</span><b id="score">0</b></div>
+      <div class="stat"><span>Mouse moves</span><b id="moves">0</b></div>
+      <div class="stat"><span>Interactions</span><b id="inter">0</b></div>
+      <div class="stat"><span>Last server decision</span><b id="decision">—</b></div>
+      <ul id="reasons"></ul>
+    </section>
+  </aside>
+</main>
+
+<script src="/agent-detect.js"></script>
+<script>
+  // demo data
+  const rows = [];
+  for (let i = 1; i <= 40; i++) rows.push(`<tr><td>Card purchase #${1000 + i}</td><td>−$${(i * 7.13).toFixed(2)}</td></tr>`);
+  document.getElementById('activity').innerHTML = rows.join('');
+
+  // honeypot field inside the form (invisible, aria-hidden, skipped by autofill)
+  document.getElementById('transfer').appendChild(AgentDetect.AgentDetect.canaryField());
+
+  const ad = AgentDetect.AgentDetect.init({
+    endpoint: '/ad',
+    flushMs: 1500,
+    appRoots: ['#app', '#panel', 'header'],
+    onLocalScore: (r) => {
+      const v = document.getElementById('verdict');
+      v.textContent = r.verdict; v.className = 'pill ' + r.verdict;
+      document.getElementById('score').textContent = r.score;
+      document.getElementById('moves').textContent = r.evidence.mouseMoves;
+      document.getElementById('inter').textContent = r.evidence.interactions;
+      document.getElementById('reasons').innerHTML = r.hits.map((h) => `<li><code>${h.id}</code> — ${h.evidence}</li>`).join('');
+    },
+  });
+  window.__ad = ad; // for the test harness
+
+  document.getElementById('viewBalance').addEventListener('click', async () => {
+    const d = await ad.decide('view_balance');
+    document.getElementById('decision').textContent = `view_balance → ${d.decision}`;
+  });
+
+  document.getElementById('transfer').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const out = document.getElementById('result');
+    out.textContent = 'Checking…';
+    const d = await ad.decide('transfer');
+    document.getElementById('decision').textContent = `transfer → ${d.decision}`;
+    window.__lastDecision = d;
+    if (d.decision === 'step_up') { out.textContent = 'Confirm with your passkey to continue (step-up required).'; return; }
+    if (d.decision === 'block') { out.textContent = 'This transfer was stopped. If this wasn\'t you, open the Harbor app.'; return; }
+    const r = await fetch('/api/transfer', { method: 'POST', headers: { 'x-agent-detect': d.token } });
+    const j = await r.json();
+    out.textContent = j.status === 'sent' ? 'Transfer sent.' : 'Transfer refused.';
+  });
+</script>
+</body>
+</html>

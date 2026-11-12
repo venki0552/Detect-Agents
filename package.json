@@ -1,0 +1,61 @@
+{
+  "name": "agent-detect",
+  "version": "0.2.0",
+  "description": "Rule-based detection of AI agents vs humans for banks and other sensitive web apps: browser collector + server-side scoring, no ML model.",
+  "main": "dist/server.js",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "build": "esbuild src/client/index.ts --bundle --minify --format=iife --global-name=AgentDetect --target=es2019 --outfile=dist/agent-detect.iife.js && esbuild src/client/index.ts --bundle --format=esm --target=es2019 --outfile=dist/agent-detect.esm.js && esbuild src/server/index.ts --bundle --platform=node --format=esm --outfile=dist/server.js",
+    "demo": "tsx demo/server.ts",
+    "test": "node --import tsx --test test/unit/*.test.ts",
+    "attack": "tsx test/e2e/attack.ts",
+    "sweep": "tsx test/unit/sweep.ts 500",
+    "bench": "npm run build && node bench/main-thread.mjs",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "bot-detection",
+    "ai-agents",
+    "agent-detection",
+    "fraud",
+    "security",
+    "banking",
+    "behavioral-signals",
+    "webmcp",
+    "trusted-types"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.24.0",
+    "playwright": "^1.56.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  },
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<your-github-user>/agent-detect.git"
+  },
+  "bugs": {
+    "url": "https://github.com/<your-github-user>/agent-detect/issues"
+  },
+  "homepage": "https://github.com/<your-github-user>/agent-detect#readme",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./dist/server.js",
+    "./server": "./dist/server.js",
+    "./client": "./dist/agent-detect.esm.js",
+    "./client.iife": "./dist/agent-detect.iife.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ]
+}
