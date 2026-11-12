@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build
+      # Collector behaviour in a real browser (what goes on the wire). Not yet verified on the bundled Chromium build.
+      - run: npm run test:browser
       - run: ATTACK_JSON=attack-results.json npm run attack
       - uses: actions/upload-artifact@v4
         with: { name: attack-results, path: attack-results.json }

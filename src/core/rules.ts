@@ -5,6 +5,11 @@
  * Tier 2 — weighted evidence; a verdict of "agent" needs hits in two or more
  *          independent categories, so no single noisy rule can convict.
  *
+ * Every rule also runs on the last few actions alone (score.ts), so its
+ * minimum sample must make sense in a short window. A rule that reads one
+ * stream against another must respect `trace.cut` (features.ts): after
+ * eviction, "no event" is not "nothing happened".
+ *
  * Thresholds are starting points. Calibrate them against real human
  * sessions before using any verdict to block (see README → Calibration).
  */
@@ -62,7 +67,7 @@ export const RULES: Rule[] = [
   // ───────────────────────── Tier 1: events ─────────────────────────
   {
     id: 'evt.untrusted', tier: 1, category: 'events', weight: 100,
-    description: 'Script-dispatched (isTrusted=false) clicks, keys or input that the app itself did not chain from a real event.',
+    description: 'Script-dispatched (isTrusted=false) clicks, keys or input that the app itself did not chain from a real event. Script events on credential/identity fields (password-manager fills) are excluded.',
     test: (f) => {
       const n = f.untrustedClicks + f.untrustedKeys + f.untrustedInputs;
       return n >= 1 ? `${n} untrusted events (clicks ${f.untrustedClicks}, keys ${f.untrustedKeys}, inputs ${f.untrustedInputs})` : null;
@@ -160,8 +165,13 @@ export const RULES: Rule[] = [
     id: 'mot.jump_arrival', tier: 2, category: 'motion', weight: 45,
     description: 'The pointer arrived at the clicked spot in a single jump (or never moved) instead of travelling there.',
     test: (f) =>
-      f.mouseClicks >= 3 && f.jumpArrivalClicks / f.mouseClicks >= 0.6
-        ? `${f.jumpArrivalClicks}/${f.mouseClicks} clicks arrived by teleport` : null,
+      f.motionClicks >= 3 && f.jumpArrivalClicks / f.motionClicks >= 0.6
+        ? `${f.jumpArrivalClicks}/${f.motionClicks} clicks arrived by teleport` : null,
+  },
+  {
+    id: 'mot.teleport_press', tier: 2, category: 'motion', weight: 45, experimental: true,
+    description: 'On one click, the pointer appeared at the target in a single jump (or without ever moving) AND the button was released within 8 ms of being pressed: no travel and no hold. A single click is enough, so it covers one robotic action after a human did everything else. Measured in real Chrome: Claude in Chrome 11/11 clicks, one real human 0/17. Needs more humans (trackpad tap-to-click, remote desktop) before it is on by default.',
+    test: (f) => (f.teleportPresses >= 1 ? `${f.teleportPresses} click${f.teleportPresses === 1 ? '' : 's'} with no pointer travel and no button hold` : null),
   },
   {
     id: 'mot.centred_clicks', tier: 2, category: 'motion', weight: 35,

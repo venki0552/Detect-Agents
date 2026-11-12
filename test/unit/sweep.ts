@@ -1,7 +1,17 @@
 import * as T from './traces';
 import { scoreTrace } from '../../src/core/score';
+/** A long human session, then an xdotool-style agent takes over the same session (the dilution case). */
+function takeover(s: number) {
+  const tr = T.humanSession(s, { actions: 40 });
+  const end = Math.max(...tr.click.map((c: any) => c.t), ...tr.key.map((k: any) => k.t));
+  const bot = T.xdotoolAgent(s + 7);
+  for (const k of ['ptr', 'btn', 'click', 'key', 'input'] as const) for (const e of bot[k]) (tr[k] as any[]).push({ ...e, t: e.t + end + 2000 });
+  return tr;
+}
 const gens: [string, (s: number) => any][] = [
   ['human', (s) => T.humanSession(s)], ['human-trackpad', (s) => T.humanSession(s, { trackpad: true })],
+  ['human-long (40)', (s) => T.humanSession(s, { actions: 40 })], ['human-short (3)', (s) => T.humanSession(s, { actions: 3 })],
+  ['takeover', takeover],
   ['keyboard-only', (s) => T.keyboardOnlyUser(s)], ['autofill', (s) => T.autofillUser(s)], ['dictation', (s) => T.dictationUser(s)],
   ['xdotool', (s) => T.xdotoolAgent(s)], ['pyautogui', (s) => T.pyautoguiAgent(s)], ['humanized', (s) => T.humanizedAgent(s)], ['cdp-dom', (s) => T.cdpDomAgent(s)],
 ];

@@ -8,6 +8,7 @@
  */
 import { chromium, type Browser, type Page } from 'playwright';
 import { startDemo } from '../../demo/server';
+import { launchOptions } from './launch';
 
 const REAL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -17,7 +18,7 @@ interface Outcome { scenario: string; decision: string; verdict: string; score: 
 
 async function stealthBrowser(): Promise<Browser> {
   const headed = process.env.HEADED === '1';
-  return chromium.launch({ channel: 'chromium', headless: !headed, args: ['--disable-blink-features=AutomationControlled'] });
+  return chromium.launch(launchOptions({ headless: !headed, args: ['--disable-blink-features=AutomationControlled'] }));
 }
 
 async function open(browser: Browser, url: string, stealth: boolean): Promise<Page> {
@@ -45,7 +46,7 @@ async function finish(page: Page, scenario: string, submit: () => Promise<void>,
 
 /** A: stock Playwright, default headless, high-level API (click/fill/selectOption/type). */
 async function stockPlaywright(url: string): Promise<Outcome> {
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(process.env.CHROMIUM_PATH ? launchOptions() : {});
   const page = await open(browser, url, false);
   await page.click('#viewBalance');
   await sleep(800);
@@ -146,7 +147,7 @@ async function extensionAgent(url: string): Promise<Outcome> {
   const { join, resolve } = await import('node:path');
   const ext = resolve('test/e2e/ext-agent');
   const ctx = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir(), 'ad-ext-')), {
-    channel: 'chromium', headless: process.env.HEADED !== '1', userAgent: REAL_UA,
+    ...launchOptions(), headless: process.env.HEADED !== '1', userAgent: REAL_UA,
     viewport: { width: 1366, height: 768 }, screen: { width: 1920, height: 1080 },
     args: ['--disable-blink-features=AutomationControlled', `--disable-extensions-except=${ext}`, `--load-extension=${ext}`],
   });
@@ -206,11 +207,56 @@ async function backgroundTab(url: string): Promise<Outcome> {
   return out;
 }
 
+/**
+ * I: a blatantly robotic but SHORT session: two teleport clicks with 0 ms holds, text typed at 12 ms.
+ * Too few samples for any rule to fire. It must come out "unknown" (step-up), never "human".
+ */
+async function shortRobot(url: string): Promise<Outcome> {
+  const browser = await stealthBrowser();
+  const page = await open(browser, url, true);
+  const a = await center(page, '#amount');
+  await sleep(1500);
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down(); await page.mouse.up();
+  await page.keyboard.type('250.00', { delay: 12 });
+  await sleep(1500);
+  const out = await finish(page, 'I. Short robotic session (2 teleport clicks, 12 ms typing)', async () => {
+    const c = await center(page, '#send');
+    await page.mouse.move(c.x, c.y);
+    await page.mouse.down(); await page.mouse.up();
+  });
+  await browser.close();
+  return out;
+}
+
+/**
+ * J: a relayed token. Session 1 asks for a transfer decision bound to the exact transfer the
+ * attacker wants, then hands the token to session 2's API call. Right action, right transaction,
+ * wrong app session: the API must refuse it on the binding alone.
+ */
+async function tokenRelay(url: string): Promise<Outcome> {
+  const browser = await stealthBrowser();
+  const donor = await open(browser, url, true);
+  const token = await donor.evaluate(async () => {
+    const AD = (window as any).AgentDetect.AgentDetect;
+    return (await (window as any).__ad.decide('transfer', await AD.contextHash('x', '9999', 'USD'))).token;
+  });
+  const victim = await open(browser, url, true); // separate context = separate app session cookie
+  const post = (page: Page) => page.evaluate(async (t) => {
+    const r = await fetch('/api/transfer', { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-detect': t }, body: JSON.stringify({ payee: 'x', amount: '9999' }) });
+    return { status: r.status, body: await r.json() };
+  }, token);
+  const res = await post(victim);
+  await browser.close();
+  const ok = res.status === 403 && res.body.reason === 'binding';
+  return { scenario: 'J. Token relayed from another session', decision: ok ? 'refused' : 'NOT REFUSED ON BINDING', verdict: '-', score: 0, hits: [], note: `API said ${res.status} ${JSON.stringify(res.body)}` };
+}
+
 async function main() {
-  const { server, url } = await startDemo(8790);
+  const { server, url } = await startDemo(Number(process.env.ATTACK_PORT) || 8790);
   const results: Outcome[] = [];
   const only = (process.env.SCENARIOS || '').split(',').filter(Boolean);
-  const all = [stockPlaywright, xdotoolStyle, humanized, scriptInjection, fillEverything, backgroundTab, overlayViaCdp, extensionAgent];
+  const all = [stockPlaywright, xdotoolStyle, humanized, scriptInjection, fillEverything, backgroundTab, overlayViaCdp, extensionAgent, shortRobot, tokenRelay];
   for (const s of all.filter((f) => !only.length || only.includes(f.name))) {
     try { results.push(await s(url)); }
     catch (e) { results.push({ scenario: s.name, decision: 'ERROR', verdict: '-', score: 0, hits: [], note: String(e).slice(0, 200) }); }

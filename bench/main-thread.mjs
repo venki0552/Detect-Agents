@@ -1,19 +1,22 @@
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
-const js = readFileSync('/home/claude/agent-detect-sdk/dist/agent-detect.iife.js', 'utf8');
-const browser = await chromium.launch({ channel: 'chromium' });
+// Run from the repo root (npm run bench). CHROMIUM_PATH picks a specific browser binary.
+const js = readFileSync(new URL('../dist/agent-detect.iife.js', import.meta.url), 'utf8');
+const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : { channel: 'chromium' });
 const page = await browser.newPage();
 await page.setContent(`<html><body><div id="app"><button id="b" style="width:120px;height:40px">Pay</button><input id="i"></div></body></html>`);
 await page.addScriptTag({ content: js });
 const r = await page.evaluate(async () => {
   const AD = (window).AgentDetect.AgentDetect;
-  const fire = (n, mk) => { const t = performance.now(); for (let i = 0; i < n; i++) window.dispatchEvent(mk(i)); return performance.now() - t; };
+  // Keys are dispatched on the <input>, moves on the button, so target-dependent work (mask and field checks) is measured too.
+  const fire = (n, mk, target = window) => { const t = performance.now(); for (let i = 0; i < n; i++) target.dispatchEvent(mk(i)); return performance.now() - t; };
+  const inp = document.getElementById('i');
   const mkMove = (i) => new PointerEvent('pointermove', { clientX: i % 800, clientY: i % 600, pointerType: 'mouse', bubbles: true });
   const mkKey = () => new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', bubbles: true });
   const btn = document.getElementById('b');
   const clickN = (n) => { const t = performance.now(); for (let i = 0; i < n; i++) btn.dispatchEvent(new PointerEvent('click', { clientX: 60, clientY: 20, pointerType: 'mouse', bubbles: true, detail: 1 })); return performance.now() - t; };
   const N = 5000;
-  const base = { move: fire(N, mkMove), key: fire(N, mkKey), click: clickN(1000) };
+  const base = { move: fire(N, mkMove), key: fire(N, mkKey, inp), click: clickN(1000) };
   const inits = [];
   let ad;
   // one instance only (each started instance adds its own listeners)
@@ -22,7 +25,7 @@ const r = await page.evaluate(async () => {
   const tEnv = performance.now();
   await new Promise((r) => { const poll = () => (ad.localFeatures().env ? r() : setTimeout(poll, 5)); poll(); });
   const envReadyMs = performance.now() - tEnv;
-  const withSdk = { move: fire(N, mkMove), key: fire(N, mkKey), click: clickN(1000) };
+  const withSdk = { move: fire(N, mkMove), key: fire(N, mkKey, inp), click: clickN(1000) };
   // fill the local trace to its cap, then time local scoring (debug-only path)
   fire(5000, mkMove);
   const scores = [];

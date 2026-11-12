@@ -1,6 +1,6 @@
 {
   "name": "agent-detect",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Rule-based detection of AI agents vs humans for banks and other sensitive web apps: browser collector + server-side scoring, no ML model.",
   "main": "dist/server.js",
   "scripts": {
@@ -11,7 +11,10 @@
     "attack": "tsx test/e2e/attack.ts",
     "sweep": "tsx test/unit/sweep.ts 500",
     "bench": "npm run build && node bench/main-thread.mjs",
-    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "test:browser": "npm run build && node --import tsx --test test/e2e/collector.test.ts",
+    "demo:capture": "npm run build && AD_CAPTURE_DIR=captures AD_EXPERIMENTAL=all tsx demo/server.ts",
+    "replay": "tsx test/unit/replay.ts"
   },
   "keywords": [
     "bot-detection",

@@ -80,9 +80,13 @@
 <script src="/agent-detect.js"></script>
 <script>
   // demo data
-  const rows = [];
-  for (let i = 1; i <= 40; i++) rows.push(`<tr><td>Card purchase #${1000 + i}</td><td>−$${(i * 7.13).toFixed(2)}</td></tr>`);
-  document.getElementById('activity').innerHTML = rows.join('');
+  // Built with DOM methods, not innerHTML: the page's own string sinks would show up as Trusted Types reports.
+  const el = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; return n; };
+  for (let i = 1; i <= 40; i++) {
+    const tr = el('tr');
+    tr.append(el('td', `Card purchase #${1000 + i}`), el('td', `−$${(i * 7.13).toFixed(2)}`));
+    document.getElementById('activity').append(tr);
+  }
 
   // honeypot field inside the form (invisible, aria-hidden, skipped by autofill)
   document.getElementById('transfer').appendChild(AgentDetect.AgentDetect.canaryField());
@@ -97,7 +101,7 @@
       document.getElementById('score').textContent = r.score;
       document.getElementById('moves').textContent = r.evidence.mouseMoves;
       document.getElementById('inter').textContent = r.evidence.interactions;
-      document.getElementById('reasons').innerHTML = r.hits.map((h) => `<li><code>${h.id}</code> — ${h.evidence}</li>`).join('');
+      document.getElementById('reasons').replaceChildren(...r.hits.map((h) => { const li = el('li'); li.append(el('code', h.id), ` — ${h.evidence}`); return li; }));
     },
   });
   window.__ad = ad; // for the test harness
@@ -111,12 +115,16 @@
     e.preventDefault();
     const out = document.getElementById('result');
     out.textContent = 'Checking…';
-    const d = await ad.decide('transfer');
+    const payee = document.getElementById('payee').value, amount = document.getElementById('amount').value;
+    // Bind the decision to THIS transfer: the API recomputes the same hash from the request body.
+    const ctx = await AgentDetect.AgentDetect.contextHash(payee, amount, 'USD');
+    const d = await ad.decide('transfer', ctx);
     document.getElementById('decision').textContent = `transfer → ${d.decision}`;
     window.__lastDecision = d;
     if (d.decision === 'step_up') { out.textContent = 'Confirm with your passkey to continue (step-up required).'; return; }
     if (d.decision === 'block') { out.textContent = 'This transfer was stopped. If this wasn\'t you, open the Harbor app.'; return; }
-    const r = await fetch('/api/transfer', { method: 'POST', headers: { 'x-agent-detect': d.token } });
+    // allow / notify: proceed (a real bank also sends the out-of-band alert on notify — never in the page)
+    const r = await fetch('/api/transfer', { method: 'POST', headers: { 'content-type': 'application/json', 'x-agent-detect': d.token }, body: JSON.stringify({ payee, amount }) });
     const j = await r.json();
     out.textContent = j.status === 'sent' ? 'Transfer sent.' : 'Transfer refused.';
   });

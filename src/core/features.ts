@@ -3,7 +3,7 @@
  * so the same code runs in the browser (debug panel) and on the server
  * (authoritative scoring).
  */
-import type { SessionTrace, PtrEv, ClickEv, EnvSnapshot } from './types';
+import type { BgState, SessionTrace, PtrEv, ClickEv, EnvSnapshot, KeyEv } from './types';
 import { cv, dist, excessKurtosis, median, skewness, std } from './stats';
 
 export interface Stroke {
@@ -22,6 +22,7 @@ export interface Features {
   untrustedKeys: number;
   untrustedInputs: number;
   untrustedMoves: number;
+  untrustedAutofill: number;  // script events on credential/identity fields (password managers) — counted, not convicted
   insertTextTotal: number;
   insertTextNoKeydown: number;
   hiddenKeyOrInput: number;   // keys/inputs while document.hidden
@@ -48,7 +49,9 @@ export interface Features {
   medianStraightness: number;
   medianSpeedCV: number;
   mouseClicks: number;
-  jumpArrivalClicks: number;  // clicks whose pointer arrived in a single jump (or never moved)
+  motionClicks: number;       // mouse clicks whose preceding pointer history is still in the trace (not evicted)
+  jumpArrivalClicks: number;  // ...of which the pointer arrived in a single jump (or never moved)
+  teleportPresses: number;    // ...and of those, the button was also released within INSTANT_HOLD_MS (judged per click)
   centredClicks: number;      // within 1.5 px of target centre (targets >= 24 px)
   centreEligibleClicks: number;
   keyboardClicks: number;     // detail === 0 (keyboard / assistive tech)
@@ -85,22 +88,63 @@ export interface Features {
 }
 
 const JUMP_PX = 400;
+const INSTANT_HOLD_MS = 8;  // same limit tim.fixed_hold uses for "near-zero"
+
 const STROKE_SPLIT_MS = 300;
 const CHAIN_MS = 100; // untrusted event this soon after a trusted one = app-chained, ignore
 
 function isMouse(p: { pt: string }) { return p.pt === 'mouse' || p.pt === 'pen'; }
 
-/** Untrusted events fired synchronously by the app inside a trusted handler are not agents. */
-function unchained(ts: number[], trustedTs: number[]): number {
+const byT = <T extends { t: number }>(a: T[]): T[] => [...a].sort((x, y) => x.t - y.t);
+
+/** Index of the last element with t <= `t` in a time-sorted array, or -1. */
+function lastAtOrBefore(sorted: { t: number }[], t: number): number {
+  let lo = 0, hi = sorted.length - 1, ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid].t <= t) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+/**
+ * Untrusted events fired synchronously by the app inside a trusted handler are not agents.
+ * `knownFrom`: before this time the trusted streams were evicted, so "no trusted event
+ * nearby" cannot be told from "it was evicted" — those events are skipped, not convicted.
+ * (The server latches Tier 1 hits before it evicts, so nothing real is lost.)
+ */
+function unchained(ts: number[], trustedSorted: number[], knownFrom: number): number {
   let n = 0;
   let j = 0;
-  const tr = [...trustedTs].sort((a, b) => a - b);
   for (const t of [...ts].sort((a, b) => a - b)) {
-    while (j < tr.length && tr[j] <= t - CHAIN_MS) j++;
-    const chained = j < tr.length && tr[j] <= t; // a trusted event within the last CHAIN_MS
+    if (t - CHAIN_MS <= knownFrom) continue;
+    while (j < trustedSorted.length && trustedSorted[j] <= t - CHAIN_MS) j++;
+    const chained = j < trustedSorted.length && trustedSorted[j] <= t; // a trusted event within the last CHAIN_MS
     if (!chained) n++;
   }
   return n;
+}
+
+/** Non-repeat, non-modifier trusted keydowns: the keys that count as typing. Time-sorted. */
+function typingKeys(trustedKeys: KeyEv[]): KeyEv[] {
+  return byT(trustedKeys.filter((k) => k.k === 'd' && k.rep === 0 && k.mod === 0));
+}
+
+/** Start of each typing burst (a pause of more than 1 s starts a new one). */
+function burstStarts(typing: KeyEv[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < typing.length; i++) if (i === 0 || typing[i].t - typing[i - 1].t > 1000) out.push(typing[i].t);
+  return out;
+}
+
+/**
+ * Times of the user's "actions" — every trusted click (any device) and every typing-burst start —
+ * in order. score.ts uses the last few to cut the recent window.
+ */
+export function actionTimes(tr: SessionTrace): number[] {
+  const clicks = tr.click.filter((c) => c.tr === 1).map((c) => c.t);
+  const bursts = burstStarts(typingKeys(tr.key.filter((k) => k.tr === 1)));
+  return [...clicks, ...bursts].sort((a, b) => a - b);
 }
 
 function buildStrokes(moves: PtrEv[], clicks: ClickEv[]): Stroke[] {
@@ -143,34 +187,44 @@ function buildStrokes(moves: PtrEv[], clicks: ClickEv[]): Stroke[] {
 }
 
 export function extractFeatures(tr: SessionTrace): Features {
-  const moves = tr.ptr.filter((p) => p.tr === 1 && isMouse(p)).sort((a, b) => a.t - b.t);
-  const trustedClicks = tr.click.filter((c) => c.tr === 1);
-  const trustedKeys = tr.key.filter((k) => k.tr === 1);
-  const trustedTimes = [...trustedClicks.map((c) => c.t), ...trustedKeys.map((k) => k.t)];
+  const cut = tr.cut ?? {};
+  const moves = byT(tr.ptr.filter((p) => p.tr === 1 && isMouse(p)));
+  const trustedClicks = byT(tr.click.filter((c) => c.tr === 1));
+  const trustedKeys = byT(tr.key.filter((k) => k.tr === 1));
+  const trustedTimes = [...trustedClicks.map((c) => c.t), ...trustedKeys.map((k) => k.t)].sort((a, b) => a - b);
 
   // ---------- events
-  const untrustedClicks = unchained(tr.click.filter((c) => c.tr === 0).map((c) => c.t), trustedTimes);
-  const untrustedKeys = unchained(tr.key.filter((k) => k.tr === 0).map((k) => k.t), trustedTimes);
-  const untrustedInputs = unchained(tr.input.filter((i) => i.tr === 0).map((i) => i.t), trustedTimes);
+  // Script events on credential/identity fields are what password-manager extensions do
+  // (set value, dispatch click/key/input). They are counted but never convict.
+  const hard = <T extends { tr: number; af?: number }>(a: T[]) => a.filter((e) => e.tr === 0 && e.af !== 1);
+  const chainKnownFrom = Math.max(cut.click ?? -Infinity, cut.key ?? -Infinity);
+  const untrustedClicks = unchained(hard(tr.click).map((c) => c.t), trustedTimes, chainKnownFrom);
+  const untrustedKeys = unchained(hard(tr.key).map((k) => k.t), trustedTimes, chainKnownFrom);
+  const untrustedInputs = unchained(hard(tr.input).map((i) => i.t), trustedTimes, chainKnownFrom);
   const untrustedMoves = tr.ptr.filter((p) => p.tr === 0).length;
+  const autofillish = (a: { tr: number; af?: number }[]) => a.filter((e) => e.tr === 0 && e.af === 1).length;
+  const untrustedAutofill = autofillish(tr.click) + autofillish(tr.key) + autofillish(tr.input);
 
   const insertText = tr.input.filter((i) => i.tr === 1 && i.it === 'insertText' && i.comp === 0 && !i.src);
   const insertTextNoKeydown = insertText.filter((i) => i.kd < 0 || i.kd > 500).length;
 
-  // Visibility timeline from the browser (VisibilityStateEntry) — immune to handler-time races.
-  const vis = [...(tr.vis ?? [])].sort((a, b) => a.t - b.t);
-  const hiddenAt = (t: number) => {
-    let h: number | null = null;
-    for (const v of vis) { if (v.t <= t) h = v.hid; else break; }
-    return h === 1;
+  // Visibility. The browser's own timeline (VisibilityStateEntry) is exact, so when it covers an
+  // event it is the only thing consulted: the handler-time flag can lag the event (a queued
+  // keydown dispatched after the tab was hidden) and must not produce a Tier 1 hit on its own.
+  // The handler-time flag is the fallback where there is no timeline (non-Chromium, or evicted).
+  const vis = byT(tr.vis ?? []);
+  const visKnownFrom = !vis.length ? Infinity : cut.vis !== undefined ? vis[0].t : -Infinity;
+  const isHidden = (e: { t: number; bg: BgState }) => {
+    if (e.t < visKnownFrom) return e.bg === 2;
+    const i = lastAtOrBefore(vis, e.t);
+    return i >= 0 && vis[i].hid === 1;
   };
   const initiallyHidden = vis.length > 0 && vis[0].hid === 1 && vis[0].t <= 50;
-  const hiddenKeyOrInput =
-    trustedKeys.filter((k) => k.bg === 2 || hiddenAt(k.t)).length +
-    tr.input.filter((i) => i.tr === 1 && (i.bg === 2 || hiddenAt(i.t))).length;
+  const trustedInputs = tr.input.filter((i) => i.tr === 1);
+  const hiddenKeyOrInput = trustedKeys.filter(isHidden).length + trustedInputs.filter(isHidden).length;
   const unfocusedKeyOrInput =
-    trustedKeys.filter((k) => k.bg === 1).length + tr.input.filter((i) => i.tr === 1 && i.bg === 1).length;
-  const hiddenClicks = trustedClicks.filter((c) => c.bg === 2 || hiddenAt(c.t)).length;
+    trustedKeys.filter((k) => k.bg === 1).length + trustedInputs.filter((i) => i.bg === 1).length;
+  const hiddenClicks = trustedClicks.filter(isHidden).length;
 
   // ---------- dom
   const foreign = tr.dom.filter((d) => d.kind === 'foreign-node' || d.kind === 'shadow-root');
@@ -179,6 +233,19 @@ export function extractFeatures(tr: SessionTrace): Features {
   const sinks = tr.dom.filter((d) => d.kind === 'script-sink' && (d.by === 'none' || d.by === 'extension'));
   const webmcpSubmits = tr.dom.filter((d) => d.kind === 'webmcp-submit').length;
   const webmcpTools = tr.dom.filter((d) => d.kind === 'webmcp-tool').length;
+
+  // ---------- button presses (needed by both motion and timing)
+  // Touch taps emit a compatibility mousedown/mouseup pair back to back; only mouse/pen presses are holds.
+  const btn = byT(tr.btn.filter((b) => b.tr === 1 && b.pt !== 'touch'));
+  const holds: number[] = [];
+  const presses: { d: number; u: number }[] = []; // each release with the press that it ended, time-sorted by release
+  let pendingDowns: number[] = [];
+  for (const b of btn) {
+    if (b.k === 'd') { pendingDowns.push(b.t); continue; }
+    for (const d of pendingDowns) if (b.t - d < 2000) holds.push(b.t - d);
+    if (pendingDowns.length) presses.push({ d: pendingDowns[pendingDowns.length - 1], u: b.t });
+    pendingDowns = [];
+  }
 
   // ---------- motion
   const withApi = moves.filter((m) => m.c > 0);
@@ -195,39 +262,50 @@ export function extractFeatures(tr: SessionTrace): Features {
   const straightVals = strokes.map((s) => s.straightness);
   const speedVals = strokes.map((s) => s.speedCV).filter(Number.isFinite);
 
-  const mouseClicksArr = trustedClicks.filter((c) => c.det > 0 && isMouse(c as any));
-  let jumpArrivalClicks = 0;
+  // Masked clicks (PIN pads) carry no geometry by design, so they are not pointer evidence either way.
+  const mouseClicksArr = trustedClicks.filter((c) => c.det > 0 && isMouse(c as any) && c.mk !== 1);
+
+  // Arrival. Only clicks whose approach is still in the trace can be judged: once pointer history
+  // has been evicted, "no move before this click" means "evicted", not "teleported".
+  const ptrCut = cut.ptr ?? -Infinity;
+  const ptrTrimmed = Number.isFinite(ptrCut);
+  let motionClicks = 0, jumpArrivalClicks = 0, teleportPresses = 0;
+  let idx = -1, pi = -1;
   for (const c of mouseClicksArr) {
-    // last two moves before this click
-    let idx = -1;
-    for (let i = moves.length - 1; i >= 0; i--) if (moves[i].t <= c.t) { idx = i; break; }
-    if (idx < 0) { jumpArrivalClicks++; continue; } // clicked without the pointer ever moving
-    const last = moves[idx];
-    const nearTarget = dist(last.x, last.y, c.x, c.y) <= 3;
-    if (!nearTarget) continue;
-    const prev = moves[idx - 1];
-    if (!prev || (dist(prev.x, prev.y, last.x, last.y) >= 100 && !last.re)) jumpArrivalClicks++;
+    if (c.t <= ptrCut) continue;
+    while (idx + 1 < moves.length && moves[idx + 1].t <= c.t) idx++;
+    if (ptrTrimmed && idx < 1) continue;           // its approach was (partly) evicted
+    motionClicks++;
+    let jumped = true, reEntry = false;            // idx < 0: clicked without the pointer ever moving
+    if (idx >= 0) {
+      const last = moves[idx], prev = moves[idx - 1];
+      jumped = dist(last.x, last.y, c.x, c.y) <= 3 && (!prev || dist(prev.x, prev.y, last.x, last.y) >= 100);
+      reEntry = last.re === 1;
+    }
+    if (!jumped) continue;
+    // A pointer coming back into the page legitimately "jumps", so mot.jump_arrival (a ratio over many
+    // clicks) gives re-entry the benefit of the doubt.
+    if (!reEntry) jumpArrivalClicks++;
+    // The same click, judged on its own: did the button also come up almost as soon as it went down?
+    // One click with neither travel nor hold needs no pattern around it (a person's hand does both).
+    // No re-entry exemption here. Measured: when a person moves their mouse off the page to an agent's
+    // side panel and the agent then clicks, the agent's single move IS the re-entry; and a person who
+    // re-enters exactly on the target still holds the button for ~100 ms.
+    while (pi + 1 < presses.length && presses[pi + 1].u <= c.t + 1) pi++;
+    const press = pi >= 0 && c.t - presses[pi].u <= 50 ? presses[pi] : undefined;
+    if (press && press.u - press.d < INSTANT_HOLD_MS) teleportPresses++;
   }
   const eligible = mouseClicksArr.filter((c) => c.w >= 24 && c.h >= 24);
   const centredClicks = eligible.filter((c) => Math.abs(c.dx) <= 1.5 && Math.abs(c.dy) <= 1.5).length;
   const keyboardClicks = trustedClicks.filter((c) => c.det === 0).length;
 
   // ---------- timing
-  const btn = tr.btn.filter((b) => b.tr === 1).sort((a, b) => a.t - b.t);
-  const holds: number[] = [];
-  for (let i = 0; i < btn.length; i++) {
-    if (btn[i].k !== 'd') continue;
-    const up = btn.slice(i + 1).find((b) => b.k === 'u');
-    if (up && up.t - btn[i].t < 2000) holds.push(up.t - btn[i].t);
-  }
 
   // actions: mouse clicks + typing-burst starts
-  const typing = trustedKeys.filter((k) => k.k === 'd' && k.rep === 0 && k.mod === 0).sort((a, b) => a.t - b.t);
-  const burstStarts: number[] = [];
-  for (let i = 0; i < typing.length; i++) if (i === 0 || typing[i].t - typing[i - 1].t > 1000) burstStarts.push(typing[i].t);
+  const typing = typingKeys(trustedKeys);
   const actions = [
     ...mouseClicksArr.map((c) => ({ t: c.t, mouse: true })),
-    ...burstStarts.map((t) => ({ t, mouse: false })),
+    ...burstStarts(typing).map((t) => ({ t, mouse: false })),
   ].sort((a, b) => a.t - b.t);
 
   let longGaps = 0, stillGaps = 0;
@@ -238,10 +316,11 @@ export function extractFeatures(tr: SessionTrace): Features {
     const gap = b.t - a.t;
     if (gap >= 1500 && gap <= 30000) gapValues.push(gap);
     if (gap < 2000 || !b.mouse) continue;
+    if (a.t <= ptrCut) continue; // pointer history for this pause was evicted: unknown, not "frozen"
     longGaps++;
     while (mi < moves.length && moves[mi].t <= a.t) mi++;
     let n = 0;
-    for (let j = mi; j < moves.length && moves[j].t < b.t; j++) n++;
+    for (let j = mi; j < moves.length && moves[j].t < b.t && n <= 2; j++) n++;
     if (n <= 2) stillGaps++;
   }
 
@@ -255,8 +334,19 @@ export function extractFeatures(tr: SessionTrace): Features {
   }
   const keyLatencies = typing.map((k) => k.l).filter((l): l is number => typeof l === 'number' && l >= 0);
   const keyHolds: number[] = [];
-  const ups = trustedKeys.filter((k) => k.k === 'u').sort((a, b) => a.t - b.t);
-  const upTimeFor = (d: { t: number; s: number }) => ups.find((u) => u.s === d.s && u.t >= d.t)?.t;
+  const upsBySlot = new Map<number, { t: number }[]>(); // per-press id → its keyups, time-sorted
+  for (const u of trustedKeys) {
+    if (u.k !== 'u') continue;
+    const list = upsBySlot.get(u.s);
+    if (list) list.push(u); else upsBySlot.set(u.s, [u]);
+  }
+  const upTimeFor = (d: { t: number; s: number }): number | undefined => {
+    const list = upsBySlot.get(d.s);
+    if (!list) return undefined;
+    let lo = 0, hi = list.length - 1, ans = -1; // first keyup at or after the keydown
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid].t >= d.t) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
+    return ans < 0 ? undefined : list[ans].t;
+  };
   let rollover = 0, rollPairs = 0;
   for (let i = 0; i < typing.length; i++) {
     const up = upTimeFor(typing[i]);
@@ -269,7 +359,7 @@ export function extractFeatures(tr: SessionTrace): Features {
 
   return {
     env: tr.env,
-    untrustedClicks, untrustedKeys, untrustedInputs, untrustedMoves,
+    untrustedClicks, untrustedKeys, untrustedInputs, untrustedMoves, untrustedAutofill,
     insertTextTotal: insertText.length, insertTextNoKeydown,
     hiddenKeyOrInput, unfocusedKeyOrInput, hiddenClicks, initiallyHidden,
     foreignNodes: foreign.length,
@@ -281,7 +371,7 @@ export function extractFeatures(tr: SessionTrace): Features {
     strokes,
     medianStraightness: median(straightVals),
     medianSpeedCV: median(speedVals),
-    mouseClicks: mouseClicksArr.length, jumpArrivalClicks, centredClicks,
+    mouseClicks: mouseClicksArr.length, motionClicks, jumpArrivalClicks, teleportPresses, centredClicks,
     centreEligibleClicks: eligible.length, keyboardClicks,
     holds, holdMedian: median(holds), holdStd: std(holds),
     longGaps, stillGaps, gapValues, gapCV: cv(gapValues),
