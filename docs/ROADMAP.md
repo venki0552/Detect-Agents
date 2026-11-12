@@ -1,6 +1,6 @@
 # Roadmap
 
-Status today: **v0.3 alpha** (2026-11-12). 34 rules, browser collector, Node scoring server, demo bank, 64 unit tests, 14 real-browser collector tests, a 10-scenario Playwright attack harness, a capture-and-replay mode for real sessions, and one real agent product measured (Claude in Chrome). **Thresholds are unvalidated on real humans, and no production deployment should let a verdict block or allow anything until P0 is done.**
+Status today: **v0.3 alpha** (2026-11-12). 34 rules, browser collector, Node scoring server, demo bank, 66 unit tests, 15 real-browser collector tests, a 10-scenario Playwright attack harness, a capture-and-replay mode for real sessions, and one real agent product measured (Claude in Chrome). **Thresholds are unvalidated on real humans, and no production deployment should let a verdict block or allow anything until P0 is done.**
 
 Part 1 says what exists. Part 2 says what does not, in priority order. Part 3 is the production-readiness checklist: what a bank has to see before this gates real money.
 

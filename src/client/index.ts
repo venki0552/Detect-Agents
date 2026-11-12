@@ -107,6 +107,8 @@ export class AgentDetect {
   private recentMoves: number[] = [];
   private leftDoc = false;
   private overMask = false;           // pointer is inside a masked region
+  private lastTrustedT = -1e9;        // last trusted click/press/key/input, to tell an app's mirrored events from a script's own
+  private maskMarks = 0;
   private lastPt: PointerKind = 'mouse';
   private lastKeydown = -1;
   private kdFresh = false;            // the last printable keydown has not paid for an insertText yet
@@ -293,6 +295,7 @@ export class AgentDetect {
     // A native <select> opens an OS popup on mousedown; the page then gets its mouseup with the SAME
     // timestamp (measured on a real person: a 0 ms "hold"). That pair says nothing about how long the
     // button was held, so it is not recorded.
+    if (e.isTrusted) this.lastTrustedT = this.now(e.timeStamp);
     const tag = (e.target as Element | null)?.tagName;
     if (tag === 'SELECT' || tag === 'OPTION') return;
     const ev: BtnEv = { t: this.now(e.timeStamp), k, tr: bit(e.isTrusted) };
@@ -302,6 +305,7 @@ export class AgentDetect {
 
   private onClick(e: PointerEvent) {
     const t = this.now(e.timeStamp);
+    if (e.isTrusted) this.lastTrustedT = t;
     const target = e.target as Element | null;
     if (target && target.classList?.contains(CANARY_CLASS)) {
       this.push('dom', { t, kind: 'canary-click' });
@@ -328,9 +332,9 @@ export class AgentDetect {
   }
 
   private onKey(e: KeyboardEvent, k: 'd' | 'u') {
-    // Key rhythm in a PIN/secret field is not ours to measure. That protects the person's input only:
-    // a script-dispatched event is not theirs, and dropping it would let a script hide behind a mask.
-    if (e.isTrusted && this.masked(e.target)) return;
+    if (e.isTrusted) this.lastTrustedT = this.now(e.timeStamp);
+    // Key rhythm in a PIN/secret field is not ours to measure: nothing per-event leaves a masked region.
+    if (this.masked(e.target)) { if (!e.isTrusted) this.scriptInMask(e); return; }
     const t = this.now(e.timeStamp);
     let s: number;
     if (k === 'd') {
@@ -365,7 +369,8 @@ export class AgentDetect {
     if (target?.classList?.contains(CANARY_CLASS) && it !== 'insertReplacementText' && this.inputSource(target) !== 1) {
       this.push('dom', { t, kind: 'canary-fill' });
     }
-    if (e.isTrusted && this.masked(target)) return; // input timing in a masked field is key timing by another name (script events are still recorded)
+    if (e.isTrusted) this.lastTrustedT = t;
+    if (this.masked(target)) { if (!e.isTrusted) this.scriptInMask(e); return; } // input timing in a masked field is key timing by another name
     const composing = !!e.isComposing || t - this.lastCompEnd < 50 || t - this.last229 < 50;
     let kd = this.lastKeydown >= 0 ? Math.round(t - this.lastKeydown) : -1;
     if (it === 'insertText' && e.isTrusted) {
@@ -379,6 +384,23 @@ export class AgentDetect {
     if (src) ev.src = src;
     if (!e.isTrusted && this.autofillField(target)) ev.af = 1;
     this.push('input', ev);
+  }
+
+  /**
+   * A script dispatched a key/input event inside a masked region. Recording those events one by one
+   * would leak the person's rhythm whenever the app mirrors real keystrokes with synthetic events
+   * (input-mask libraries do), so the collector decides here and sends at most three markers, with
+   * the time rounded to the second:
+   *  - within 100 ms of a real event → the app's own mirror: nothing;
+   *  - on a credential field → a password manager: nothing;
+   *  - otherwise → a script acting on its own inside the mask: one marker.
+   */
+  private scriptInMask(e: Event) {
+    const t = this.now(e.timeStamp);
+    if (t - this.lastTrustedT <= 100) return;
+    if (this.autofillField(e.target)) return;
+    if (++this.maskMarks > 3) return;
+    this.push('dom', { t: Math.round(t / 1000) * 1000, kind: 'script-in-mask' });
   }
 
   /** 1 = browser/password-manager autofill (:autofill), 2 = one-time-code field (SMS / WebOTP fill). */

@@ -23,6 +23,7 @@ export interface Features {
   untrustedInputs: number;
   untrustedMoves: number;
   untrustedAutofill: number;  // script events on credential/identity fields (password managers) — counted, not convicted
+  untrustedMasked: number;    // markers for script key/input events inside a masked region (the collector judged them unchained)
   insertTextTotal: number;
   insertTextNoKeydown: number;
   hiddenKeyOrInput: number;   // keys/inputs while document.hidden
@@ -205,6 +206,8 @@ export function extractFeatures(tr: SessionTrace): Features {
   const autofillish = (a: { tr: number; af?: number }[]) => a.filter((e) => e.tr === 0 && e.af === 1).length;
   const untrustedAutofill = autofillish(tr.click) + autofillish(tr.key) + autofillish(tr.input);
 
+  const untrustedMasked = tr.dom.filter((d) => d.kind === 'script-in-mask').length;
+
   const insertText = tr.input.filter((i) => i.tr === 1 && i.it === 'insertText' && i.comp === 0 && !i.src);
   const insertTextNoKeydown = insertText.filter((i) => i.kd < 0 || i.kd > 500).length;
 
@@ -359,7 +362,7 @@ export function extractFeatures(tr: SessionTrace): Features {
 
   return {
     env: tr.env,
-    untrustedClicks, untrustedKeys, untrustedInputs, untrustedMoves, untrustedAutofill,
+    untrustedClicks, untrustedKeys, untrustedInputs, untrustedMoves, untrustedAutofill, untrustedMasked,
     insertTextTotal: insertText.length, insertTextNoKeydown,
     hiddenKeyOrInput, unfocusedKeyOrInput, hiddenClicks, initiallyHidden,
     foreignNodes: foreign.length,

@@ -48,8 +48,8 @@ Full method, synthetic sweeps, signal probes and cost: [docs/RESULTS.md](docs/RE
 ```bash
 npm install
 npm run build
-npm test          # 64 unit tests: rules, scoring soundness, server over real HTTP
-npm run test:browser   # 14 collector tests in real Chromium
+npm test          # 66 unit tests: rules, scoring soundness, server over real HTTP
+npm run test:browser   # 15 collector tests in real Chromium
 npm run demo      # fictional bank at http://localhost:8787 with a live session panel
 npm run attack    # the attack scenarios above (needs Playwright's Chromium, or CHROMIUM_PATH=/path/to/chrome)
 ```

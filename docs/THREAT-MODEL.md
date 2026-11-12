@@ -60,14 +60,14 @@ If you classify money movement as `high` instead of `critical`, you are acceptin
 | Launder by navigating (clock restarts on each page) | Every page load is rebased onto one server timeline (D17) |
 | Replay an old batch | Per-page-load nonce, strictly increasing `seq` |
 | Reuse a decision token | Single use by token id, 120 s TTL (D19). Per process until the shared store exists |
-| Exhaust the replay cache so nobody can authorize | Rationed per principal (D34); closed with `bind`, a request flood without it |
+| Exhaust the replay cache so nobody can authorize | Rationed per principal, and session-less tokens are not remembered (D34, D35). Closed with `bind`; a request flood without it |
 | Use a token for a different transfer, or in a different session | `ctx` (transaction hash recomputed by the API) and `sub` (session binding) (D18, D19) |
 | Forge a token | HMAC-SHA256, secret ≥ 32 characters, constant-time comparison, strict two-part format |
 | Unknown action or policy typo | Treated as `high`; invalid policy refuses to start (D12) |
 | Drive the endpoints from another site | JSON content type required (forces a CORS preflight), `Sec-Fetch-Site: cross-site` refused |
 | Learn which rule fired | `exposeReasons: false` in production (refuses to start otherwise). The rules themselves are public; see `SECURITY.md` |
 | Flood with garbage or expensive traces | Body cap (512 KB), per-stream caps (~16,500 events per session), session cap enforced at insert with LRU eviction, linear-time scoring. **Rate limiting is not built in** |
-| Retag a field or mask a region from a script, to hide a script fill | A field's autofill class is fixed when it first appears; script events are recorded even inside a mask (D34). A late mask is still honoured for privacy, so it can hide pointer geometry and trusted key timing, never script events |
+| Retag a field or mask a region from a script, to hide a script fill | A field's autofill class is fixed when it first appears (D34); a script acting on its own inside a mask leaves a marker that `evt.untrusted` counts (D35). A late mask is still honoured for privacy, so it can hide pointer geometry and trusted key timing. A script that fires within 100 ms of a real event is treated as the app's own |
 | Tamper with the collector itself in the page (remove listeners, register earlier ones, drive the framework without DOM events) | **Not preventable** from inside the page. Missing evidence fails closed to `unknown`; it cannot produce `human`, though it leaves standing whatever a person showed earlier |
 
 ## Out of scope (v0.3)

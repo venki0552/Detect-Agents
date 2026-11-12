@@ -105,9 +105,10 @@ export type DomKind =
   | 'canary-click' | 'canary-fill' | 'canary-focus'
   | 'script-sink'      // Trusted Types report-only violation (HTML/script injected via a string sink)
   | 'webmcp-submit'    // SubmitEvent.agentInvoked === true
-  | 'webmcp-tool';     // toolactivated / toolcancel
+  | 'webmcp-tool'      // toolactivated / toolcancel
+  | 'script-in-mask';  // a script dispatched key/input events inside a masked region (coarse, rate-limited marker: no timing series)
 
-export const DOM_KINDS: DomKind[] = ['foreign-node', 'agent-marker', 'shadow-root', 'canary-click', 'canary-fill', 'canary-focus', 'script-sink', 'webmcp-submit', 'webmcp-tool'];
+export const DOM_KINDS: DomKind[] = ['foreign-node', 'agent-marker', 'shadow-root', 'canary-click', 'canary-fill', 'canary-focus', 'script-sink', 'webmcp-submit', 'webmcp-tool', 'script-in-mask'];
 
 export interface DomEv {
   t: number;

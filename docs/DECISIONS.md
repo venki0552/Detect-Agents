@@ -61,7 +61,8 @@ Timestamps are local time with the UTC offset. D1–D11 were written before this
 | D31 | Presses on a native `<select>` are not button holds | 2026-11-12 04:14 EST | active |
 | D32 | `mot.no_coalesced` fires on a real human: what to do with it | 2026-11-12 04:14 EST | **open question** |
 | D33 | `mot.teleport_press`: judge a single click on its own | 2026-11-12 04:20 EST | active, **experimental (off by default)** |
-| D34 | Security review of the v0.3 commit: three findings | 2026-11-12 11:43 EST | active |
+| D34 | Security review of the v0.3 commit: three findings | 2026-11-12 11:43 EST | active; items 1 and 3 refined by D35 |
+| D35 | Second review: in-mask script events become a marker; anonymous tokens are not remembered | 2026-11-12 11:47 EST | active |
 
 ## D1. Detect and respond per action, don't block sessions
 
@@ -419,3 +420,22 @@ The review's one-paragraph conclusion: **the server trusted the shape of the cli
 - **How it was decided:** three failing tests first, then the fixes; 64 unit and 14 browser tests pass; `npm run bench` unchanged (about 0.25 µs per move, 0.4 µs per key, 3 µs per click).
 - **Consequences / cost:** an app that sets a login field's `autocomplete` attribute *after* inserting the element will now have password-manager fills of that field treated as Tier 1; list such fields in `autofillFields` or set the attribute at render time. One background scan of form fields at start-up and one per inserted subtree.
 - **Revisit when:** a real password-manager harness exists (roadmap), or a legitimate app is found that masks or tags fields late.
+
+## D35. Second review: in-mask script events become a marker; anonymous tokens are not remembered
+
+- **Decided:** 2026-11-12 11:47 EST · **By:** Claude (`claude-fable-5-2`), in response to a second automated review, of commit `c49a2be` · **Status:** active. **Supersedes item 1 of D34** (how script events in a mask are handled) and refines item 3 (replay-cache rationing). The rest of D34 stands.
+- **Context:** the fixes in D34 were themselves reviewed, and two of them were wrong in ways worth writing down.
+
+**1. Recording script events inside a mask leaked the person's rhythm, and would have convicted them.** D34 recorded every `isTrusted=false` key and input event in a masked region, with its timestamp, reasoning that a script's events are not the person's. But apps mirror real keystrokes with synthetic events (input-mask libraries re-dispatch `input` on each key). Those mirrors carry the person's key timing out of the mask, which is exactly what D24 promised would not happen. And because the trusted keystrokes that chain them are not recorded in a mask, the server would have seen them as unchained: Tier 1, `block`, for a person typing a PIN.
+- *Chosen:* nothing per-event leaves a masked region, trusted or not. The collector decides locally: a script event within 100 ms of a real event is the app's mirror (nothing sent); one on a credential field is a password manager (nothing sent); otherwise it sends a `script-in-mask` marker, at most three per page, with the time rounded to the second. `evt.untrusted` counts the markers.
+- *Why here and not on the server:* the server does not have the trusted events needed to tell a mirror from a script's own action, and must not be given them.
+- *Cost:* the "unchained" judgement for masked regions is made in the browser, which an attacker controls. That is no worse than the attacker not dispatching events at all. The same 100 ms window applies as everywhere else (D28).
+- *Tests:* `a mask hides what a person does; a script acting inside it leaves one coarse marker and no timing series`, `an app's own synthetic events in a masked field (input-mask library) leave no marker and no timing` (browser; the second failed on the D34 code with the person's key rhythm in the trace), `a script acting inside a masked region is counted by evt.untrusted through its marker` (unit).
+
+**2. The per-principal ration made anonymous callers easier to starve.** D34 gave all tokens with no session one shared "anonymous" bucket of 2,000. Seventeen requests a second from one caller would fill it and every other caller without a session (for example a user whose ad blocker stops the collector) would be refused on `low` actions. Before D34 that took the whole 200,000 cap.
+- *Chosen:* a token minted with no session and no binding is not remembered at all. Anyone can obtain another one for free, so single use adds nothing to it; it is only ever `allow` for an action the policy marks `low`, and with `bind` configured such tokens cannot be minted or authorized in the first place.
+- *Stated plainly:* without `bind`, the ration is keyed on a session id, and sessions are free to open, so it limits an honest client and not an attacker. The protection is real only with `bind`. Without it, filling the global cap takes a flood of authorized requests, which is the deployment's rate limiting (D30).
+- *Test:* `anonymous tokens (anyone can mint them) take no room in the replay cache…` (unit).
+
+- **How it was decided:** four failing tests first; 66 unit and 15 browser tests pass; bench unchanged.
+- **Lesson recorded for whoever changes this next:** a fix made under review needs the same scrutiny as the code it fixes. Both mistakes came from reasoning about the attacker and not re-checking the non-negotiable rules (privacy, accessibility) against the new code path.

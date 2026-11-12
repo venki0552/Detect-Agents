@@ -147,18 +147,38 @@ test('masked region (PIN pad): no click geometry, no pointer path, no key timing
   await ctx.close();
 });
 
-test('a mask hides what a person does, not what a script does: untrusted events inside it are still recorded', async () => {
+test('a mask hides what a person does; a script acting inside it leaves one coarse marker and no timing series', async () => {
   const { ctx, page, trace } = await open();
   await page.evaluate(() => {
     const f = document.getElementById('pinfield')!;
-    f.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: '4' }));
-    f.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+    for (let i = 0; i < 12; i++) {
+      f.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: '4' }));
+      f.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+    }
   });
   const tr = await trace();
-  assert.equal(tr.key.filter((k) => k.tr === 0).length, 1, 'script key event in a masked field is recorded');
-  assert.equal(tr.input.filter((i) => i.tr === 0).length, 1, 'script input event in a masked field is recorded');
+  assert.equal(tr.key.length + tr.input.length, 0, 'no per-event records from inside the mask, trusted or not');
+  const marks = tr.dom.filter((d) => d.kind === 'script-in-mask');
+  assert.ok(marks.length >= 1 && marks.length <= 3, `rate-limited marker, got ${marks.length}`);
   const sid = await page.evaluate(() => (window as any).__ad.sessionId);
-  assert.ok(ad.evaluate(sid, 'transfer').hits.some((h) => h.id === 'evt.untrusted'), 'so evt.untrusted still fires');
+  assert.ok(ad.evaluate(sid, 'transfer').hits.some((h) => h.id === 'evt.untrusted'), 'evt.untrusted still fires');
+  await ctx.close();
+});
+
+test("an app's own synthetic events in a masked field (input-mask library) leave no marker and no timing", async () => {
+  const { ctx, page, trace } = await open();
+  await page.evaluate(() => {
+    const f = document.getElementById('pinfield')!;
+    // what an input-mask library does: re-dispatch `input` from inside the real key handler
+    f.addEventListener('keydown', () => f.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' })));
+  });
+  await page.click('#pinfield');
+  await page.keyboard.type('4821', { delay: 40 });
+  const tr = await trace();
+  assert.equal(tr.key.length + tr.input.length, 0, 'the person\'s key rhythm does not leak through the app\'s mirrored events');
+  assert.equal(tr.dom.filter((d) => d.kind === 'script-in-mask').length, 0, 'app-chained events are not evidence');
+  const sid = await page.evaluate(() => (window as any).__ad.sessionId);
+  assert.ok(!ad.evaluate(sid, 'transfer').hits.some((h) => h.id === 'evt.untrusted'));
   await ctx.close();
 });
 

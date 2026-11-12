@@ -108,7 +108,8 @@ A rule is a pull request with evidence, not just code:
 - When editing a file from a script, read it fully before opening it for writing. `open(p,'w').write(open(p).read()…)` empties the file first (this destroyed `CHANGELOG.md` once on 2026-11-12; it was rebuilt from a backup).
 - The `re` flag (first move after the pointer left the page) is not proof of a human re-entry: when a person moves their mouse to an agent's side panel, the agent's single synthetic move is flagged `re`. Ratio rules may give it the benefit of the doubt; a rule that judges one click must not (D33).
 - Claude in Chrome's in-page indicator is a bare `div` (no id, class, attributes; closed shadow root) appended to `body`. It cannot be used as an `agentMarkers` selector.
-- Collector attributes are read once: a field's autofill class is cached when first seen (`fieldClass`), and masks hide only trusted events. Don't "simplify" either back to a live attribute read or an unconditional early return (D34).
+- A field's autofill class is cached when first seen (`fieldClass`); don't go back to reading the attribute at event time (D34). In a masked region **no** per-event record leaves the browser, trusted or not: a script acting alone leaves a coarse `script-in-mask` marker, decided client-side. Recording untrusted events there was tried and leaked the person's key rhythm through the app's mirrored events (D35).
+- A fix made in response to a review gets the same checks as any change: re-read the non-negotiable rules against the new code path. Two review fixes on 2026-11-12 needed fixing themselves (D35).
 - `npm test` covers no browser code. After any change to `src/client/`, run `npm run test:browser` and `npm run bench`.
 - WebMCP (`agentInvoked`, `toolactivated`) needs Chromium 146+ behind a flag: feature-detected, unit-tested only.
 - Synthetic sweep numbers are not evidence of real false-positive rates. Never present them as such.

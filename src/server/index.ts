@@ -88,8 +88,10 @@ export interface AgentDetectServerOptions {
   /** Token ids remembered for single use, in total. When full, authorize() refuses (fails closed). Default 200 000. */
   maxUsedTokens?: number;
   /**
-   * …and per principal (the token's binding, else its session, else "anonymous"). One caller hammering your API
-   * with valid tokens then exhausts only its own share, not everyone's. Default 2 000 per token lifetime.
+   * …and per principal (the token's binding, else its session). One caller hammering your API with valid
+   * tokens then exhausts only its own share, not everyone's — provided `bind` is set, since without it a
+   * caller can open as many sessions as it likes. Tokens minted with no session are not remembered at all.
+   * Default 2 000 per token lifetime.
    */
   maxUsedTokensPerPrincipal?: number;
   /** Accept requests the browser labels `Sec-Fetch-Site: cross-site`. Default false. */
@@ -441,11 +443,16 @@ export function createAgentDetect(opts: AgentDetectServerOptions) {
     }
     const proceed = p.decision === 'allow' || p.decision === 'notify' || (p.decision === 'step_up' && expect.stepUpVerified === true);
     if (!proceed) return { ok: false, reason: 'decision', payload: p };
+    // A token minted with no session and no binding is one anyone can get again for free, so making it
+    // single use buys nothing — and remembering it would let anonymous callers fill the cache. It is not
+    // remembered. (Such a token is only ever `allow` for an action the policy marks `low`.)
+    if (!p.sub && !p.sid) return { ok: true, reason: 'ok', payload: p };
     if (usedTokens.has(p.jti)) return { ok: false, reason: 'replayed', payload: p };
     // The replay cache is shared, so it is rationed per principal: a caller spending valid tokens as fast
     // as it can fills its own share and is refused, while everyone else keeps working. Refusing (not
-    // evicting) keeps single use intact under load.
-    const who = p.sub ? `b:${p.sub}` : p.sid ? `s:${p.sid}` : 'anonymous';
+    // evicting) keeps single use intact under load. The ration only truly binds when `bind` is set:
+    // without it a principal is a session id, and sessions are free to open (see D35).
+    const who = p.sub ? `b:${p.sub}` : `s:${p.sid}`;
     const full = () => usedTokens.size >= maxUsed || (usedBy.get(who) ?? 0) >= maxUsedEach;
     if (full()) { purgeTokens(); if (full()) return { ok: false, reason: 'busy', payload: p }; }
     usedTokens.set(p.jti, { exp: p.exp, who });

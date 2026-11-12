@@ -69,8 +69,8 @@ export const RULES: Rule[] = [
     id: 'evt.untrusted', tier: 1, category: 'events', weight: 100,
     description: 'Script-dispatched (isTrusted=false) clicks, keys or input that the app itself did not chain from a real event. Script events on credential/identity fields (password-manager fills) are excluded.',
     test: (f) => {
-      const n = f.untrustedClicks + f.untrustedKeys + f.untrustedInputs;
-      return n >= 1 ? `${n} untrusted events (clicks ${f.untrustedClicks}, keys ${f.untrustedKeys}, inputs ${f.untrustedInputs})` : null;
+      const n = f.untrustedClicks + f.untrustedKeys + f.untrustedInputs + f.untrustedMasked;
+      return n >= 1 ? `${n} untrusted events (clicks ${f.untrustedClicks}, keys ${f.untrustedKeys}, inputs ${f.untrustedInputs}${f.untrustedMasked ? `, in masked regions ${f.untrustedMasked}` : ''})` : null;
     },
   },
   {

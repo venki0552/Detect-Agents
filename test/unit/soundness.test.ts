@@ -328,3 +328,13 @@ test('mot.teleport_press does not fire on any human or accessibility profile, an
   assert.ok(fired(T.cdpDomAgent()), 'DevTools-Protocol DOM agent');
   assert.ok(!fired(T.humanizedAgent()), 'a humanized agent travels and holds: this rule is not for it');
 });
+
+test('a script acting inside a masked region is counted by evt.untrusted through its marker (D35)', () => {
+  const tr = T.humanSession(44);
+  assert.ok(!ids(tr).includes('evt.untrusted'));
+  tr.dom.push({ t: 9000, kind: 'script-in-mask' });
+  const r = scoreTrace(tr);
+  assert.ok(r.hits.some((h) => h.id === 'evt.untrusted'));
+  assert.equal(extractFeatures(tr).untrustedMasked, 1);
+  assert.equal(sanitizeBatch({ dom: [{ t: 1, kind: 'script-in-mask', tag: 'x', by: 'page' }] }).dom!.length, 1);
+});

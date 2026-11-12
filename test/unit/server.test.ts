@@ -333,6 +333,23 @@ test('one principal cannot fill the token replay cache for everyone else', async
   } finally { b.close(); }
 });
 
+test('anonymous tokens (anyone can mint them) take no room in the replay cache, so they cannot be used to starve it', async () => {
+  const b = await boot({ maxUsedTokensPerPrincipal: 2, maxUsedTokens: 4 });
+  try {
+    const reasons: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      const { token } = (await b.post('/ad/decide', { sid: 'none', nonce: 'none', action: 'view_balance' })).json;
+      reasons.push(b.ad.authorize(token, { action: 'view_balance' }).reason);
+    }
+    assert.deepEqual([...new Set(reasons)], ['ok']);
+    assert.equal(b.ad.stats().usedTokens, 0);
+    // a token earned by a real session is still single use
+    const { token } = await humanToken(b, 'transfer');
+    assert.equal(b.ad.authorize(token, { action: 'transfer' }).ok, true);
+    assert.equal(b.ad.authorize(token, { action: 'transfer' }).reason, 'replayed');
+  } finally { b.close(); }
+});
+
 test('per-session memory is bounded by the stream caps', async () => {
   const b = await boot();
   try {
