@@ -61,6 +61,7 @@ Timestamps are local time with the UTC offset. D1–D11 were written before this
 | D31 | Presses on a native `<select>` are not button holds | 2026-11-12 04:14 EST | active |
 | D32 | `mot.no_coalesced` fires on a real human: what to do with it | 2026-11-12 04:14 EST | **open question** |
 | D33 | `mot.teleport_press`: judge a single click on its own | 2026-11-12 04:20 EST | active, **experimental (off by default)** |
+| D34 | Security review of the v0.3 commit: three findings | 2026-11-12 11:43 EST | active |
 
 ## D1. Detect and respond per action, don't block sessions
 
@@ -387,3 +388,34 @@ The review's one-paragraph conclusion: **the server trusted the shape of the cli
 - **How it was decided:** unit tests written first and seen failing (`one teleport-press click at the end of a human session…`, `…needs BOTH halves…`, `…does not fire on any human or accessibility profile…`). Replay of the real captures with the rule on: the human-then-agent transfer goes from `allow` to `step_up`; the person's six own captures are unchanged; Claude in Chrome alone fires on 10/10 clicks. Synthetic sweep: 0 fires in 3,000 human-profile sessions; 500/500 on the xdotool-style and DevTools-Protocol click agents; 0 on the humanized agent (it travels and holds, by design).
 - **Consequences / cost:** off by default means that, today, the observed case still goes through unless the integrator enables the rule (`scoreConfig.experimental: ['mot.teleport_press']`) or marks the action `critical`. `npm run demo:capture` turns experimental rules on so they are evaluated on every captured session. An agent defeats it by adding a hold of a few tens of ms or a few moves; then it is back to needing a pattern. It does nothing for keyboard-driven or touch actions.
 - **Revisit when:** three or more people on different hardware, including a trackpad with tap-to-click, have been captured with it on. If it stays silent on them, turn it on by default.
+
+---
+
+# 2026-11-12, later: automated security review of commit `90d065d`
+
+## D34. Security review of the v0.3 commit: three findings
+
+- **Decided:** 2026-11-12 11:43 EST · **By:** Claude (`claude-fable-5-2`), in response to an automated security review of the commit · **Status:** active. Amends D19, D21 and D24 without changing what they decided.
+- **Context:** the review flagged three medium issues. Each was checked against the code and reproduced with a failing test before anything changed.
+
+**1. A mask hid script events too (amends D24).** Inside a masked region the collector dropped *every* key and input event. A script could therefore fill a masked field, or put `data-ad-mask` on an ordinary field and fill that, without producing the `isTrusted=false` events that `evt.untrusted` exists to see.
+- *Chosen:* the mask now applies to the person's input only. Trusted key and input events in a mask are still not recorded; script-dispatched ones are, like anywhere else.
+- *Why:* the mask exists because a person's rhythm and click positions are content. A script's events are not the person's, so recording them costs no privacy.
+- *Not changed, on purpose:* a mask added later (`setAttribute('data-ad-mask', …)` on an existing element) is still honoured. Ignoring late masks would turn a rendering detail of a legitimate app into a privacy leak, and rule 1 outranks detection. The cost: a script can mask the page to hide pointer geometry and trusted key timing of what follows. Such a session cannot *gain* `human` from masked input (masked clicks are not evidence), but evidence a person gave earlier stands.
+- *Test:* `a mask hides what a person does, not what a script does…` (browser).
+
+**2. The password-manager exemption trusted attributes read at event time (amends D21).** A script could set `autocomplete="username"` on the amount field and then fill it; the event was tagged `af` and exempted. D21 had accepted this on the grounds that such a script can also disable the collector. The review is right that it was cheaper than that: one line, no tampering with the SDK, and on framework-controlled forms a script *must* dispatch an `input` event, so the exemption was the difference between Tier 1 and nothing.
+- *Chosen:* a field's autofill class is decided once, when the page first shows it (a background scan at start-up, and again for every node the page inserts), and is never re-read. Retagging a field afterwards changes nothing. A password field that becomes `type="text"` (a show-password toggle) keeps its class.
+- *Rejected from the review's suggestions:* narrowing the token list to credentials and cards only. It would not stop retagging (the attacker would use `username`), and it would convict password managers that fill names and addresses. Also rejected: requiring server-side corroboration from `:autofill`, which extension managers never set.
+- *Residual:* fields inside shadow roots are not seen by the scan and are classified on first use. A script that inserts its own field controls that field. A script that drives the framework directly (calling a component's change handler) produces no DOM event at all.
+- *Test:* `a field's autofill class is fixed when the page first shows it…` (browser).
+
+**3. One caller could fill the token replay cache for everyone (amends D19).** The cache of spent token ids had one global cap and refused all authorizations when full. A caller with valid tokens (for example `allow` on a `low` action, which needs no session) who spent them fast enough would lock every user out of every action.
+- *Chosen:* the cache is rationed per principal: the token's binding, else its session, else one shared "anonymous" bucket. Default 2,000 live ids each (`maxUsedTokensPerPrincipal`), 200,000 in total (`maxUsedTokens`). A caller that fills its share gets `busy`; others are unaffected.
+- *Why refuse rather than evict:* evicting an unexpired id to make room would let that token be used twice. Under load the system keeps single use and gives up availability for the offender only.
+- *Residual:* without `bind` there is no principal an attacker cannot multiply (they can open many sessions), so the global cap can still be reached by a flood of roughly 1,700 authorized requests per second sustained. That is a request flood, which D30 leaves to the deployment. With `bind`, it is closed.
+- *Test:* `one principal cannot fill the token replay cache for everyone else` (unit, real HTTP).
+
+- **How it was decided:** three failing tests first, then the fixes; 64 unit and 14 browser tests pass; `npm run bench` unchanged (about 0.25 µs per move, 0.4 µs per key, 3 µs per click).
+- **Consequences / cost:** an app that sets a login field's `autocomplete` attribute *after* inserting the element will now have password-manager fills of that field treated as Tier 1; list such fields in `autofillFields` or set the attribute at render time. One background scan of form fields at start-up and one per inserted subtree.
+- **Revisit when:** a real password-manager harness exists (roadmap), or a legitimate app is found that masks or tags fields late.

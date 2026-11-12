@@ -85,6 +85,13 @@ export interface AgentDetectServerOptions {
    * one user's session is useless in another's). Strongly recommended in production.
    */
   bind?: (req: IncomingMessage) => string | null | undefined;
+  /** Token ids remembered for single use, in total. When full, authorize() refuses (fails closed). Default 200 000. */
+  maxUsedTokens?: number;
+  /**
+   * …and per principal (the token's binding, else its session, else "anonymous"). One caller hammering your API
+   * with valid tokens then exhausts only its own share, not everyone's. Default 2 000 per token lifetime.
+   */
+  maxUsedTokensPerPrincipal?: number;
   /** Accept requests the browser labels `Sec-Fetch-Site: cross-site`. Default false. */
   allowCrossSite?: boolean;
   /** Hook for audit logging. Exceptions are swallowed; it can never change a decision. */
@@ -318,7 +325,6 @@ export type AuthorizeReason = 'ok' | 'invalid' | 'action' | 'ctx' | 'binding' | 
 
 const ACTION_RE = /^[A-Za-z0-9_.:-]{1,64}$/;
 const CTX_RE = /^[A-Za-z0-9_\-.:=+/]{1,128}$/;
-const MAX_USED_TOKENS = 200_000;
 
 export function createAgentDetect(opts: AgentDetectServerOptions) {
   const secrets = asList(opts.secret);
@@ -340,7 +346,10 @@ export function createAgentDetect(opts: AgentDetectServerOptions) {
   const maxSessions = Math.max(1, opts.maxSessions ?? 50_000);
   const sessions = new Map<string, Session>();   // insertion order = least recently used first
   const byBinding = new Map<string, string>();   // sub → sid
-  const usedTokens = new Map<string, number>();  // jti → exp (seconds)
+  const usedTokens = new Map<string, { exp: number; who: string }>(); // jti → expiry (seconds) and the principal that spent it
+  const usedBy = new Map<string, number>();                           // principal → live entries in usedTokens
+  const maxUsed = Math.max(1, opts.maxUsedTokens ?? 200_000);
+  const maxUsedEach = Math.max(1, opts.maxUsedTokensPerPrincipal ?? 2_000);
 
   const subOf = (binding: string) => b64u(createHmac('sha256', secrets[0]).update('agent-detect/sub\n' + binding).digest()).slice(0, 22);
   const bindingOf = (req: IncomingMessage): string | null => {
@@ -353,7 +362,15 @@ export function createAgentDetect(opts: AgentDetectServerOptions) {
     sessions.delete(sid);
   };
   const touch = (s: Session) => { s.touched = Date.now(); sessions.delete(s.sid); sessions.set(s.sid, s); };
-  const purgeTokens = () => { const now = Date.now() / 1000; for (const [k, exp] of usedTokens) if (exp < now) usedTokens.delete(k); };
+  const purgeTokens = () => {
+    const now = Date.now() / 1000;
+    for (const [k, v] of usedTokens) {
+      if (v.exp >= now) continue;
+      usedTokens.delete(k);
+      const n = (usedBy.get(v.who) ?? 1) - 1;
+      if (n > 0) usedBy.set(v.who, n); else usedBy.delete(v.who);
+    }
+  };
   const gc = () => {
     const now = Date.now();
     for (const [k, s] of sessions) if (now - s.touched > idle) evict(k);
@@ -425,8 +442,14 @@ export function createAgentDetect(opts: AgentDetectServerOptions) {
     const proceed = p.decision === 'allow' || p.decision === 'notify' || (p.decision === 'step_up' && expect.stepUpVerified === true);
     if (!proceed) return { ok: false, reason: 'decision', payload: p };
     if (usedTokens.has(p.jti)) return { ok: false, reason: 'replayed', payload: p };
-    if (usedTokens.size >= MAX_USED_TOKENS) { purgeTokens(); if (usedTokens.size >= MAX_USED_TOKENS) return { ok: false, reason: 'busy', payload: p }; }
-    usedTokens.set(p.jti, p.exp);
+    // The replay cache is shared, so it is rationed per principal: a caller spending valid tokens as fast
+    // as it can fills its own share and is refused, while everyone else keeps working. Refusing (not
+    // evicting) keeps single use intact under load.
+    const who = p.sub ? `b:${p.sub}` : p.sid ? `s:${p.sid}` : 'anonymous';
+    const full = () => usedTokens.size >= maxUsed || (usedBy.get(who) ?? 0) >= maxUsedEach;
+    if (full()) { purgeTokens(); if (full()) return { ok: false, reason: 'busy', payload: p }; }
+    usedTokens.set(p.jti, { exp: p.exp, who });
+    usedBy.set(who, (usedBy.get(who) ?? 0) + 1);
     return { ok: true, reason: 'ok', payload: p };
   }
 

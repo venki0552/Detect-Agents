@@ -316,6 +316,23 @@ test('bind: a token minted in one app session is useless in another (no token re
   } finally { b.close(); }
 });
 
+test('one principal cannot fill the token replay cache for everyone else', async () => {
+  const b = await boot({ bind: cookieBind, maxUsedTokensPerPrincipal: 3 });
+  try {
+    const mallory = { cookie: 'app=mallory-session' };
+    const asMallory = { headers: mallory } as unknown as http.IncomingMessage;
+    const results: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const { token } = await humanToken(b, 'transfer', {}, mallory);
+      results.push(b.ad.authorize(token, { action: 'transfer', req: asMallory }).reason);
+    }
+    assert.deepEqual(results, ['ok', 'ok', 'ok', 'busy', 'busy'], 'Mallory is cut off at her own cap');
+    const alice = { cookie: 'app=alice-session' };
+    const { token } = await humanToken(b, 'transfer', {}, alice);
+    assert.equal(b.ad.authorize(token, { action: 'transfer', req: { headers: alice } as unknown as http.IncomingMessage }).ok, true, 'Alice is unaffected');
+  } finally { b.close(); }
+});
+
 test('per-session memory is bounded by the stream caps', async () => {
   const b = await boot();
   try {

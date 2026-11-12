@@ -80,6 +80,11 @@ export class AgentDetect {
   private opts: Required<Omit<AgentDetectOptions, 'endpoint' | 'onLocalScore'>> & Pick<AgentDetectOptions, 'endpoint' | 'onLocalScore'>;
   private maskSel = '';
   private autofillSel = '';
+  // A field's autofill class is decided ONCE, when the page first shows it, and never re-read:
+  // otherwise a script could tag the amount field `autocomplete="username"` just before filling it.
+  private fieldClass = new WeakMap<Element, boolean>();
+  private pendingScan: ParentNode[] = [];
+  private scanQueued = false;
   private t0 = performance.now();
   private buf: SessionTrace = emptyTrace();
   private all: SessionTrace = emptyTrace(); // local copy for debug scoring
@@ -146,12 +151,39 @@ export class AgentDetect {
    * Those events are isTrusted=false and would otherwise be hard evidence of a script agent.
    */
   private autofillField(t: EventTarget | null): boolean {
-    const el = t as HTMLInputElement | null;
+    const el = t as Element | null;
     if (!el || !el.getAttribute) return false;
+    let c = this.fieldClass.get(el);
+    if (c === undefined) { c = this.classify(el); this.fieldClass.set(el, c); } // not seen by a scan (e.g. inside a shadow root)
+    return c;
+  }
+
+  private classify(t: Element): boolean {
+    const el = t as HTMLInputElement;
     if (el.tagName === 'INPUT' && el.type === 'password') return true;
     if (AUTOFILL_TOKENS.test((el.getAttribute('autocomplete') || '').toLowerCase())) return true;
     if (!this.autofillSel) return false;
     try { return el.matches(this.autofillSel); } catch { return false; }
+  }
+
+  /** Classify form fields under `root` at background priority; the first classification of a field sticks. */
+  private queueScan(root: ParentNode) {
+    if (this.pendingScan.length >= 2000) this.pendingScan = [document]; // a burst of insertions: one full rescan instead
+    this.pendingScan.push(root);
+    if (this.scanQueued) return;
+    this.scanQueued = true;
+    this.background(() => {
+      this.scanQueued = false;
+      const roots = this.pendingScan;
+      this.pendingScan = [];
+      const remember = (el: Element) => { if (!this.fieldClass.has(el)) this.fieldClass.set(el, this.classify(el)); };
+      for (const r of roots) {
+        try {
+          if ((r as Element).matches && (r as Element).matches('input,select,textarea')) remember(r as Element);
+          r.querySelectorAll('input,select,textarea').forEach(remember);
+        } catch { /* detached or exotic node */ }
+      }
+    });
   }
 
   /** ms since collector start, on the same clock as event.timeStamp. */
@@ -228,6 +260,7 @@ export class AgentDetect {
     }
 
     if (this.opts.canaries) this.injectCanary();
+    this.queueScan(document);
     this.observeDom();
 
     if (this.opts.endpoint) {
@@ -295,7 +328,9 @@ export class AgentDetect {
   }
 
   private onKey(e: KeyboardEvent, k: 'd' | 'u') {
-    if (this.masked(e.target)) return; // key rhythm in a PIN/secret field is not ours to measure
+    // Key rhythm in a PIN/secret field is not ours to measure. That protects the person's input only:
+    // a script-dispatched event is not theirs, and dropping it would let a script hide behind a mask.
+    if (e.isTrusted && this.masked(e.target)) return;
     const t = this.now(e.timeStamp);
     let s: number;
     if (k === 'd') {
@@ -330,7 +365,7 @@ export class AgentDetect {
     if (target?.classList?.contains(CANARY_CLASS) && it !== 'insertReplacementText' && this.inputSource(target) !== 1) {
       this.push('dom', { t, kind: 'canary-fill' });
     }
-    if (this.masked(target)) return; // input timing in a masked field is key timing by another name
+    if (e.isTrusted && this.masked(target)) return; // input timing in a masked field is key timing by another name (script events are still recorded)
     const composing = !!e.isComposing || t - this.lastCompEnd < 50 || t - this.last229 < 50;
     let kd = this.lastKeydown >= 0 ? Math.round(t - this.lastKeydown) : -1;
     if (it === 'insertText' && e.isTrusted) {
@@ -439,6 +474,7 @@ export class AgentDetect {
         m.addedNodes.forEach((node) => {
           if (node.nodeType !== 1) return;
           const el = node as Element;
+          this.queueScan(el); // classify any form fields it brings, before anything can retag them
           if (el.classList?.contains(CANARY_CLASS) || el.tagName === 'IFRAME' && (el as HTMLIFrameElement).style.visibility === 'hidden') return;
           if (agentMarkers.some((sel) => { try { return el.matches(sel) || !!el.querySelector(sel); } catch { return false; } })) {
             this.push('dom', { t, kind: 'agent-marker', tag: el.tagName.toLowerCase() } as DomEv);

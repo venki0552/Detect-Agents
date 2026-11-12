@@ -33,7 +33,7 @@ ES module build: `import AgentDetect from 'agent-detect/client'`.
 | Do this | Why |
 |---|---|
 | Put `data-ad-mask` on on-screen PIN pads, virtual keyboards and security-code grids | A click position on a keypad is the digit. Inside a mask the collector records no click geometry, pointer path or key timing |
-| Give login and identity fields their `autocomplete` token (`username`, `current-password`, `one-time-code`, `cc-number`, …), or list them in `autofillFields` | Password-manager extensions fill by script. Those events are `isTrusted=false`; on a field the collector recognises as a credential field they are ignored, anywhere else they are Tier 1 (`block`) |
+| Give login and identity fields their `autocomplete` token **in the markup you render** (the collector classifies a field once, when it first appears; an attribute added later is ignored) (`username`, `current-password`, `one-time-code`, `cc-number`, …), or list them in `autofillFields` | Password-manager extensions fill by script. Those events are `isTrusted=false`; on a field the collector recognises as a credential field they are ignored, anywhere else they are Tier 1 (`block`) |
 | Do **not** put an identity `autocomplete` token on amount, payee or memo fields | That would exempt script fills of exactly the fields an attacker needs |
 | Keep your own code off `innerHTML`-style sinks where you can | The collector ignores reports from your own scripts, but every one you avoid is one less thing to reason about |
 
@@ -185,6 +185,7 @@ Configuration:
 - The API uses `authorize()` with `ctx` recomputed server-side.
 - `exposeReasons: false`, `debug: false` (the module refuses to start otherwise when `NODE_ENV=production`).
 - `maxSessions` sized for memory: budget about 1.5 MB per session worst case.
+- `maxUsedTokensPerPrincipal` (default 2,000 spent tokens per session per token lifetime) left at a value no real user reaches.
 - `basePath` chosen so ad blockers do not block it (the default `/ad` has not been verified against filter lists).
 
 Around it:

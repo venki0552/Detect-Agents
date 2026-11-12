@@ -147,6 +147,49 @@ test('masked region (PIN pad): no click geometry, no pointer path, no key timing
   await ctx.close();
 });
 
+test('a mask hides what a person does, not what a script does: untrusted events inside it are still recorded', async () => {
+  const { ctx, page, trace } = await open();
+  await page.evaluate(() => {
+    const f = document.getElementById('pinfield')!;
+    f.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: '4' }));
+    f.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+  });
+  const tr = await trace();
+  assert.equal(tr.key.filter((k) => k.tr === 0).length, 1, 'script key event in a masked field is recorded');
+  assert.equal(tr.input.filter((i) => i.tr === 0).length, 1, 'script input event in a masked field is recorded');
+  const sid = await page.evaluate(() => (window as any).__ad.sessionId);
+  assert.ok(ad.evaluate(sid, 'transfer').hits.some((h) => h.id === 'evt.untrusted'), 'so evt.untrusted still fires');
+  await ctx.close();
+});
+
+test("a field's autofill class is fixed when the page first shows it: retagging it later does not exempt script fills", async () => {
+  const { ctx, page, trace } = await open();
+  await page.waitForTimeout(300);                    // let the collector's background field scan run
+  await page.evaluate(() => {
+    const amount = document.getElementById('amount')!;
+    amount.setAttribute('autocomplete', 'username');  // what an in-page agent would do before filling it
+    amount.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+  });
+  let tr = await trace();
+  const amountEv = tr.input.filter((i) => i.tr === 0);
+  assert.equal(amountEv.length, 1);
+  assert.notEqual(amountEv[0].af, 1, 'the amount field was not an autofill field when first seen');
+  // a credential field the app adds later is classified when it is inserted
+  await page.evaluate(() => {
+    const i = document.createElement('input'); i.id = 'late-pw'; i.type = 'password';
+    document.getElementById('app')!.appendChild(i);
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => {
+    const i = document.getElementById('late-pw') as HTMLInputElement;
+    i.type = 'text';                                  // show-password toggle: still the same credential field
+    i.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  tr = await trace();
+  assert.equal(tr.input.filter((i) => i.tr === 0 && i.af === 1).length, 1, 'the late-inserted password field keeps its class');
+  await ctx.close();
+});
+
 test('one printable keydown pays for one insertText: text injected after a real key is still keyless', async () => {
   const { ctx, page, trace } = await open();
   await page.click('#amount');
