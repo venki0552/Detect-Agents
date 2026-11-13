@@ -94,6 +94,7 @@ A rule is a pull request with evidence, not just code:
 
 - Playwright **emulates focus and visibility**: background-tab scenarios can't be reproduced with it (scenario F is inconclusive by design). Test those headed in real Chrome.
 - Playwright needs the Chromium build that matches its version (`npx playwright install chromium`). If that is not installed, point `CHROMIUM_PATH` at another Chromium/Chrome-for-Testing binary. **Record the browser version with every result**: behaviour differs between versions (next bullet).
+- CI's browser job is pinned to `ubuntu-24.04`: Playwright refuses to install on an Ubuntu release it does not know, and `ubuntu-latest` moves. Change the pin and the Playwright version together (D36).
 - On a machine without a GPU `env.software_renderer` fires in every e2e run; ignore it there. On a machine with a GPU it does not.
 - `env.cdp_runtime` (console serialisation trick) never fired on Chromium 141; it's likely dead.
 - Event Timing `interactionId` is assigned to DevTools-Protocol input too. It's not a signal, so don't re-add it.

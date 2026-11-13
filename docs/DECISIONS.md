@@ -63,6 +63,7 @@ Timestamps are local time with the UTC offset. D1–D11 were written before this
 | D33 | `mot.teleport_press`: judge a single click on its own | 2026-11-12 04:20 EST | active, **experimental (off by default)** |
 | D34 | Security review of the v0.3 commit: three findings | 2026-11-12 11:43 EST | active; items 1 and 3 refined by D35 |
 | D35 | Second review: in-mask script events become a marker; anonymous tokens are not remembered | 2026-11-12 11:47 EST | active |
+| D36 | CI browser job pinned to Ubuntu 24.04 | 2026-11-12 21:32 EST | active |
 
 ## D1. Detect and respond per action, don't block sessions
 
@@ -439,3 +440,14 @@ The review's one-paragraph conclusion: **the server trusted the shape of the cli
 
 - **How it was decided:** four failing tests first; 66 unit and 15 browser tests pass; bench unchanged.
 - **Lesson recorded for whoever changes this next:** a fix made under review needs the same scrutiny as the code it fixes. Both mistakes came from reasoning about the attacker and not re-checking the non-negotiable rules (privacy, accessibility) against the new code path.
+
+## D36. CI browser job pinned to Ubuntu 24.04
+
+- **Decided:** 2026-11-12 21:32 EST · **By:** Claude (`claude-fable-5-2`), from a CI failure the maintainer pasted · **Status:** active
+- **Context:** the first push to `main` ran the `attack-harness` job on `ubuntu-latest`, which is now Ubuntu 26.04. `npx playwright install --with-deps chromium` failed: "Playwright does not support chromium on ubuntu26.04-x64" (Playwright 1.56.0).
+- **Options considered:** (a) pin the job's runner to `ubuntu-24.04`; (b) upgrade Playwright to a release that supports 26.04; (c) run the job in Playwright's own container image.
+- **Chosen:** (a), for the `attack-harness` job only. The `test` job does not use a browser and stays on `ubuntu-latest`.
+- **Why:** it is the smallest change and keeps the browser build the results were recorded against. (b) changes the bundled Chromium, and browser behaviour here has already differed between versions (the extension Trusted Types probe, `RESULTS.md` §3), so it should be a deliberate step with the results re-recorded, not a side effect of fixing CI. (c) works too but adds an image to keep in step with the package version.
+- **How it was decided:** from the error text. **Not verified:** the fix has not been run, and the browser tests have never run on Playwright's bundled Chromium, only on Chrome for Testing 158 through `CHROMIUM_PATH`. The next CI run is the first real check of both.
+- **Consequences / cost:** the runner image will eventually be retired by GitHub. The pin must move with the Playwright version.
+- **Revisit when:** Playwright is upgraded, or GitHub announces the end of the 24.04 image.

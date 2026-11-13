@@ -52,6 +52,9 @@ A full logic review, then the first measurements against a real agent and a real
 - A field's autofill class is fixed when the page first shows it, so retagging the amount field `autocomplete="username"` no longer exempts a script fill.
 - The token replay cache is rationed per principal (`maxUsedTokensPerPrincipal`, default 2,000; `maxUsedTokens`, default 200,000), so one caller cannot lock everyone out when `bind` is set. Tokens minted with no session are not remembered (D35).
 
+**CI**
+- The browser job is pinned to Ubuntu 24.04; Playwright 1.56 cannot install Chromium on the 26.04 image that `ubuntu-latest` now points to (D36).
+
 **Scope decisions**
 - Performing the step-up (passkey or otherwise) is the integrator's; the SDK only signals that one is needed (D29). Rate limiting is not a product feature (D30).
 
