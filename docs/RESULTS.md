@@ -20,7 +20,7 @@ Environment: **Chrome for Testing 158.0.8127.18**, driven by Playwright 1.56.0 t
 | F | Typing into a background tab | step_up | unknown — **inconclusive** | Playwright emulates focus and visibility, so the tab never became hidden. Unit-tested only. (It steps up because 2 clicks and 6 keys are too little evidence for `human`.) |
 | G | Humanized (C) + highlight overlay injected via DevTools Protocol (`innerHTML`) | **step_up** | agent (80–87), 6/6 | C's rules + `dom.injected_html` (no source file), `dom.foreign_nodes` |
 | H | Humanized (C) + MV3 extension drawing overlays (isolated + main world) | **step_up** | **suspect (51–68), 6/6** | C's rules + `dom.foreign_nodes`. `dom.injected_html` did **not** fire: see §3 |
-| I | Short robotic session: 2 teleport clicks with instant release, 12 ms typing | **step_up** | unknown (0), 6/6 | None: too few samples for any rule. Before v0.3 this pattern scored `human` in the unit reproduction |
+| I | Short robotic session: 2 teleport clicks with instant release, 12 ms typing | **step_up** | unknown (0), 6/6. After `mot.teleport_press` was switched on (D37): **suspect (45)**, 1 run | Originally none: too few samples for any statistical rule. Now `mot.teleport_press`. Before v0.3 this pattern scored `human` in the unit reproduction |
 | J | A token for the same action and the same transfer, minted in another session, presented to the API | **refused** (`binding`), 5/5 | n/a | `authorize()` session-binding check |
 
 What this shows:
@@ -103,7 +103,7 @@ What the trace held for that one click:
 
 Why nothing fired: every behavioural rule is a statistic over 3–5 or more samples, and the recent-window pass looks at the last 8 actions, 7 of which were the person's. `mot.jump_arrival` also exempts a pointer that re-enters the page, which is exactly what the agent's move looked like after the person's mouse had left.
 
-Re-scored with the new experimental rule `mot.teleport_press` (one click with no pointer travel and no button hold):
+Re-scored with the new rule `mot.teleport_press` (one click with no pointer travel and no button hold; experimental at first, on by default since D37):
 
 | Capture | Before | With `mot.teleport_press` on |
 |---|---|---|

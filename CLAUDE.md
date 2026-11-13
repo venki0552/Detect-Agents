@@ -74,6 +74,7 @@ Data flow: collector → `POST /ad/session` (reports its clock) → `POST /ad/co
 11. **The server owns the clock.** Never score a client timestamp that has not been through `rebase` (D17). Never let the client choose which session it is when `bind` is configured (D18).
 12. **Tokens are checked in one place.** New API-side checks go into `authorize()`, not into documentation for integrators to remember (D19). `allow` and `notify` proceed; `step_up` only with a verified step-up; `block` never.
 13. **Mask what is content.** Where a position or a rhythm *is* the secret (PIN pads, virtual keyboards), nothing measurable may leave the browser (`data-ad-mask`, D24).
+14. **Never recognise a person.** The product answers "human or automation?" for the current session. No per-user behavioural template, no comparison against a stored profile, no linking across sessions. The legal position (GDPR Art. 9, US biometric statutes) depends on that purpose; a "does this match the customer's usual behaviour" feature is a different product and needs a new legal analysis first (D39, `docs/LEGAL-REVIEW.md`).
 
 ## Adding or changing a rule
 
@@ -82,7 +83,7 @@ A rule is a pull request with evidence, not just code:
 1. Add it to `RULES` in `src/core/rules.ts`: `id` (`<category-prefix>.<name>`), `tier`, `category`, `weight`, `description`, `test()` returning evidence text or `null`.
    - **Tier 1** = hard evidence of automation, near-zero false positives possible. One hit means `agent`.
    - **Tier 2** = weighted. `agent` needs score ≥ 70 **and** ≥ 2 distinct categories.
-   - Uncalibrated rules get `experimental: true` (off unless enabled via `scoreConfig.experimental`).
+   - Uncalibrated rules get `experimental: true` (off unless enabled via `scoreConfig.experimental`). The one exception so far is `mot.teleport_press`, switched on by the maintainer (D37); do not treat it as a precedent.
 2. If it needs new data: add the type in `types.ts`, collect it in `client/index.ts`, sanitize it in `server/index.ts`, and compute it in `features.ts`.
 3. Write the tests first and watch them fail (`test/unit/rules.test.ts`): it fires on the target agent trace, and **does not fire** on humans, trackpad, keyboard-only, autofill, dictation and IME traces. Also check it on a **long** session passed through `mergeBatch` (eviction) and in the **recent window** (it will run on the last 8 actions alone, so its minimum sample must make sense there).
 4. Run `npm run sweep` and confirm the human profiles stay at 0% `agent`, including `human-long`.
@@ -126,4 +127,5 @@ A rule is a pull request with evidence, not just code:
 
 - `docs/DECISIONS.md`: why things are the way they are, with dates, evidence and rejected options. Read it before proposing an ML scorer, client-side fingerprints, in-page alerts, a looser `human` floor, or a change to which rules block. **D28 lists what was considered and deliberately not done.**
 - `docs/ROADMAP.md`: what is implemented and what is not, by priority (P0: API-driven step-up signal, shadow mode, human-session calibration). **Out of product scope by decision:** performing the step-up (D29) and rate limiting (D30). Don't build either here.
+- `docs/LEGAL-REVIEW.md`: the privacy and legal position and what a deployer must do. Read it before adding any new data field, any storage, or any hosted mode.
 - `docs/THREAT-MODEL.md`: which attacker each layer covers, the residual risks stated plainly, and what is out of scope.

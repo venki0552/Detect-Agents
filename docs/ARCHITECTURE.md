@@ -88,6 +88,8 @@ Timestamps use `event.timeStamp` relative to collector start (same clock as `per
 
 `critical` never returns `allow`: it is for actions where a wrong `human` is not acceptable. An unrecognised sensitivity is treated as `high`.
 
+The "Tier 1 hit" row is the default. `onTier1` lets a deployment make any Tier 1 rule (or all of them) return `step_up` instead of `block`; if several fired, one that blocks is enough to block (D38).
+
 `notify` means proceed **and** send an out-of-band alert (push to the bank's app). Never show it in the page, because the agent can see and dismiss it.
 
 ## Deployment shapes

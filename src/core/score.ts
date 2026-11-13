@@ -36,6 +36,23 @@ export interface ScoreConfig extends RuleConfig {
   tailActions?: number;
 }
 
+/** What a Tier 1 hit does to an action above `low`. */
+export type Tier1Response = 'block' | 'step_up';
+
+/**
+ * The deployment's choice of response to hard evidence (D38). `block` is the default for every
+ * Tier 1 rule. A rule set to `step_up` asks for the human instead of refusing: use it where the
+ * evidence proves a script acted but not that the customer is absent (for example `evt.untrusted`,
+ * which assistive and productivity extensions also trigger). If several Tier 1 rules fired, one
+ * that blocks is enough to block.
+ */
+export interface Tier1Policy {
+  /** Response for Tier 1 rules not listed in `rules`. Default 'block'. */
+  default?: Tier1Response;
+  /** Response by rule id. */
+  rules?: Record<string, Tier1Response>;
+}
+
 const RANK: Record<Verdict, number> = { human: 0, unknown: 1, suspect: 2, agent: 3 };
 
 /**
@@ -123,7 +140,7 @@ export function scoreTrace(trace: SessionTrace, cfg: ScoreConfig = {}, carried: 
  *
  *                 low       medium     high       critical
  *   declared      allow     step_up    step_up    step_up   (WebMCP agent that announced itself)
- *   hard (T1)     notify    block      block      block
+ *   hard (T1)     notify    block*     block*     block*    (* or step_up, per rule: see Tier1Policy)
  *   agent         notify    step_up    step_up    step_up
  *   suspect       allow     notify     step_up    step_up
  *   unknown       allow     allow      step_up    step_up
@@ -133,12 +150,19 @@ export function scoreTrace(trace: SessionTrace, cfg: ScoreConfig = {}, carried: 
  * "human" verdict is evidence, not proof. Anything that is not a known sensitivity is treated as
  * `high` — a typo in a policy must fail closed.
  */
-export function decide(r: ScoreResult, sensitivity: Sensitivity): Decision {
+export function decide(r: ScoreResult, sensitivity: Sensitivity, tier1?: Tier1Policy): Decision {
   const s: Sensitivity = SENSITIVITIES.includes(sensitivity) ? sensitivity : 'high';
   // A declared (WebMCP) agent is cooperative: read-only is fine, anything that changes state needs the human.
   if (r.declared) return s === 'low' ? 'allow' : 'step_up';
-  const hard = r.hits.some((h: RuleHit) => h.tier === 1);
-  if (hard) return s === 'low' ? 'notify' : 'block';
+  const hard = r.hits.filter((h: RuleHit) => h.tier === 1 && h.category !== 'declared');
+  if (hard.length) {
+    if (s === 'low') return 'notify';
+    // Only an explicit, well-formed 'step_up' softens a rule; anything else reads as block.
+    const policy: Tier1Policy = tier1 && typeof tier1 === 'object' ? tier1 : {};
+    const rules = policy.rules && typeof policy.rules === 'object' ? policy.rules : {};
+    const blocks = (id: string) => (Object.prototype.hasOwnProperty.call(rules, id) ? rules[id] : policy.default) !== 'step_up';
+    return hard.some((h) => blocks(h.id)) ? 'block' : 'step_up';
+  }
   if (s === 'critical') return 'step_up';
   switch (r.verdict) {
     case 'agent': return s === 'low' ? 'notify' : 'step_up';

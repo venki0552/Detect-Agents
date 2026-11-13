@@ -41,11 +41,11 @@ A full logic review, then the first measurements against a real agent and a real
 - Collector: serialised flushes, re-open after 403, `decide()` fails closed (D27).
 - Per-stream caps, LRU session cap enforced at insert, linear-time feature extraction (86 ms → ~10 ms on an adversarial trace) (D26).
 - Real-session tooling: `npm run demo:capture` prints every decision and saves the session's trace; `?fresh=1&label=` gives a new, named session per page load; `npm run replay` re-scores captures with the current rules.
-- Tests: 66 unit tests (was 21), including the server over real HTTP; `npm run test:browser`, 15 collector tests in real Chromium; attack scenarios I (short robotic session) and J (token relay); sweep profiles for long, short and takeover sessions.
+- Tests: 69 unit tests (was 21), including the server over real HTTP; `npm run test:browser`, 15 collector tests in real Chromium; attack scenarios I (short robotic session) and J (token relay); sweep profiles for long, short and takeover sessions.
 - `CHROMIUM_PATH` and `ATTACK_PORT` for the browser runs; `bench/main-thread.mjs` no longer has a hard-coded path.
 
-**New experimental rule (off by default)**
-- `mot.teleport_press`: one click with no pointer travel and no button hold. Added after a real test in which a person filled the form and Claude in Chrome clicked "Review & send": the transfer was allowed. With the rule on, that capture is `step_up`; the person's own sessions are unaffected (D33). 34 rules.
+**New rule**
+- `mot.teleport_press`: one click with no pointer travel and no button hold. On by default by the maintainer's decision (D37), ahead of trackpad and remote-desktop measurements. Added after a real test in which a person filled the form and Claude in Chrome clicked "Review & send": the transfer was allowed. That capture is now `step_up`; the person's own sessions are unaffected (D33). 34 rules.
 
 **Security reviews of the v0.3 commits (D34, D35)**
 - Nothing per-event leaves a masked region. A script acting on its own inside one leaves a coarse, rate-limited `script-in-mask` marker that `evt.untrusted` counts; an app's own mirrored events and password-manager fills leave nothing (D35, correcting D34).
@@ -54,6 +54,13 @@ A full logic review, then the first measurements against a real agent and a real
 
 **CI**
 - The browser job is pinned to Ubuntu 24.04; Playwright 1.56 cannot install Chromium on the 26.04 image that `ubuntu-latest` now points to (D36).
+
+**Configurable response to hard evidence (D38)**
+- `onTier1: { default, rules }`: block (default) or step-up for Tier 1 hits, overall and per rule. Validated at startup; anything unrecognised blocks.
+
+**Privacy and legal review (D39)**
+- `docs/LEGAL-REVIEW.md`: code audit of the privacy claims, EU/UK/US mapping, deployer checklist, questions for counsel. Not legal advice.
+- New rule of the project: the product never recognises a person (no per-user behavioural profile).
 
 **Scope decisions**
 - Performing the step-up (passkey or otherwise) is the integrator's; the SDK only signals that one is needed (D29). Rate limiting is not a product feature (D30).

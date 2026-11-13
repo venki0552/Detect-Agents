@@ -61,6 +61,7 @@ const ad = createAgentDetect({
     transfer: 'critical',             // always needs the account holder, whatever the verdict
   },
   bind: (req) => appSessionId(req),   // YOUR authenticated session id (or null → 401)
+  onTier1: { rules: { 'evt.untrusted': 'step_up' } },   // optional: ask for the human instead of refusing (default: block)
   onDecision: (e) => auditLog.write(e),
 });
 
@@ -94,6 +95,22 @@ if (!a.ok) return res.writeHead(403).end();   // a.reason: invalid | action | ct
 | `medium` | Reversible changes | **Only holds against agents that do not manipulate their telemetry.** A client that sends a little, plausible telemetry is `unknown`, which is `allow` here |
 | `high` | Sensitive actions where occasional friction is acceptable | Steps up unless the verdict is `human` |
 | `critical` | Money movement, new payees above a limit, credential and contact changes | **Always** steps up (or blocks on Tier 1). Use this for anything you could not undo |
+
+### Block or step up on hard evidence (`onTier1`)
+
+A Tier 1 hit blocks actions above `low` by default. That is your choice to make, per rule:
+
+```ts
+onTier1: {
+  default: 'block',                          // every Tier 1 rule not listed below
+  rules: { 'evt.untrusted': 'step_up' },     // a script acted: ask for the human instead of refusing
+}
+```
+
+- If several Tier 1 rules fired, one that is set to block is enough to block.
+- A wrong rule id or value stops the server at startup.
+- **Block** when the evidence means no customer can be present (`env.webdriver`, `env.headless_ua`, `env.automation_globals`). **Consider step-up** where it only proves a script acted, because customers run scripts too: `evt.untrusted` also fires for keyboard-navigation, voice-control and form-filler extensions. A person passes a step-up and is locked out by a block.
+- The trade-off the other way: a step-up prompt that appears while an agent is driving the browser can be approved by an inattentive human. A block cannot.
 
 ### What `bind` should return
 
@@ -194,5 +211,6 @@ Around it:
 - Your step-up mechanism, wired to `stepUpVerified` (the SDK signals the need; it does not perform the step-up).
 - `data-ad-mask` on any on-screen keypad; `autocomplete` tokens on login fields.
 - Start in shadow mode and calibrate (`docs/CALIBRATION.md`).
-- Privacy notice, legal review and retention policy (`docs/PRIVACY.md`).
+- Privacy notice, legal review and retention policy (`docs/PRIVACY.md`, `docs/LEGAL-REVIEW.md`). Run it on your own servers; do not hand sessions to a third party.
+- `onTier1` decided deliberately, with your accessibility and fraud teams.
 - The collector script served from your own origin, with Subresource Integrity if it is served from anywhere else.

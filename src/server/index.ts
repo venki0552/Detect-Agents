@@ -27,7 +27,8 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Batch, Decision, RuleHit, Sensitivity, SessionTrace, StreamKey } from '../core/types';
 import { appendBatch, DOM_KINDS, emptyTrace, overCap, SENSITIVITIES, STREAM_CAPS, STREAM_KEYS, TIER1_STREAMS, trimTrace } from '../core/types';
-import { decide, scoreTrace, type ScoreConfig } from '../core/score';
+import { decide, scoreTrace, type ScoreConfig, type Tier1Policy } from '../core/score';
+import { ruleCatalog } from '../core/rules';
 import { extractFeatures } from '../core/features';
 
 /**
@@ -72,6 +73,13 @@ export interface AgentDetectServerOptions {
   /** Enable GET {basePath}/debug/:sid (demo only). */
   debug?: boolean;
   scoreConfig?: ScoreConfig;
+  /**
+   * What a Tier 1 hit does to an action above `low`: `block` (default) or `step_up`, overall and per rule.
+   * Example: `{ rules: { 'evt.untrusted': 'step_up' } }` asks for the human when a script acted, instead of
+   * refusing. If several Tier 1 rules fired, one that blocks is enough to block. Invalid values and unknown
+   * rule ids throw at startup.
+   */
+  onTier1?: Tier1Policy;
   /** Decision token lifetime, seconds. Default 120. */
   tokenTtl?: number;
   /** Session idle expiry, ms. Default 30 min. */
@@ -342,6 +350,16 @@ export function createAgentDetect(opts: AgentDetectServerOptions) {
     if (!SENSITIVITIES.includes(level)) throw new Error(`agent-detect: policy["${action}"] must be one of ${SENSITIVITIES.join(', ')}`);
     policy.set(action, level);
   }
+  // The response to hard evidence is a security setting: a typo must stop the server, not quietly change who gets blocked.
+  const onTier1: Tier1Policy = opts.onTier1 ?? {};
+  const okResponse = (v: unknown) => v === 'block' || v === 'step_up';
+  if (onTier1.default !== undefined && !okResponse(onTier1.default)) throw new Error('agent-detect: onTier1.default must be "block" or "step_up"');
+  const catalog = new Map(ruleCatalog().map((r) => [r.id, r.tier]));
+  for (const [id, v] of Object.entries(onTier1.rules ?? {})) {
+    if (!catalog.has(id)) throw new Error(`agent-detect: onTier1.rules["${id}"] is not a known rule`);
+    if (catalog.get(id) !== 1) throw new Error(`agent-detect: onTier1.rules["${id}"] is not a Tier 1 rule`);
+    if (!okResponse(v)) throw new Error(`agent-detect: onTier1.rules["${id}"] must be "block" or "step_up"`);
+  }
   const base = (opts.basePath ?? '/ad').replace(/\/$/, '');
   const ttl = opts.tokenTtl ?? 120;
   const idle = opts.sessionTtlMs ?? 30 * 60 * 1000;
@@ -423,7 +441,7 @@ export function createAgentDetect(opts: AgentDetectServerOptions) {
     const r = scoreAndLatch(s);
     // Silence must never be a better deal than being seen: with nothing reported, everything above "low" needs the human.
     if (silent(s) && !r.hits.some((h) => h.tier === 1)) return noTelemetry;
-    return { decision: decide(r, sensitivity), verdict: r.verdict as string, score: r.score, hits: r.hits, scope: r.scope, sensitivity };
+    return { decision: decide(r, sensitivity, onTier1), verdict: r.verdict as string, score: r.score, hits: r.hits, scope: r.scope, sensitivity };
   }
 
   /** Decision for a session id and action, without issuing a token (admin / tests). */

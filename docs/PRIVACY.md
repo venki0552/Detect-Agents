@@ -26,6 +26,10 @@ Two cases where "timing and geometry only" is not enough:
 - **On-screen PIN pads, virtual keyboards, security-code grids.** The position of a click identifies the key. Mark these regions with `data-ad-mask` (or `maskSelectors`). Inside them the collector records no click coordinates or sizes, no pointer path and none of the person's key or input events. (If a script dispatches key or input events there on its own, the collector sends at most three markers saying so, with the time rounded to the second. Synthetic events an app fires to mirror the person's real keystrokes send nothing.) This is **your** responsibility: the collector cannot recognise a keypad by itself. Without the mask, click coordinates on a keypad are recorded.
 - **Key timing in password fields.** Intervals between keystrokes carry a small amount of information about what was typed. The collector records timing in password fields by default, because typing rhythm is one of the few signals on a login page. If your privacy review objects, mask those fields too; you lose that evidence.
 
+## What it is never used for
+
+Recognising a person. The software answers "human or automation?" for the current session. It keeps no per-user behavioural template, compares nothing against a stored profile and links nothing across sessions. That is a rule of the project (`CLAUDE.md`), and the legal position in `LEGAL-REVIEW.md` depends on it.
+
 ## Still personal data?
 
 Possibly. Behavioral timing (typing rhythm, mouse dynamics) can be treated as **biometric data** under laws such as Illinois BIPA, and as personal data under GDPR/CCPA. Before production:
@@ -35,5 +39,7 @@ Possibly. Behavioral timing (typing rhythm, mouse dynamics) can be treated as **
 - Set retention: keep raw traces only as long as the session (the in-memory default expires after 30 minutes of idle time) and keep decisions/audit logs per your fraud-records policy. The audit hook receives rule ids, scores and counters, not raw events.
 - Don't use the data for anything other than security (no marketing, no profiling).
 - Treat calibration datasets as sensitive: consent, minimization, access control.
+
+A fuller review, with what was verified in the code, the position under EU, UK and US rules, a checklist for deployers and the questions to put to counsel, is in [`LEGAL-REVIEW.md`](LEGAL-REVIEW.md).
 
 This document isn't legal advice.

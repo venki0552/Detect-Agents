@@ -37,7 +37,7 @@ Real Playwright automation against the demo bank (Chrome for Testing 158, 2026-1
 
 **A real agent in a real browser:** Claude in Chrome driving Chrome 157 on the demo was **blocked** when it used its form-fill tool (script event), and was `agent` (83) → **step_up** using mouse and keyboard only. Two runs, one machine.
 
-**One agent click after a human filled the form** (also real): the transfer was **allowed**. A new experimental rule that judges a single click (`mot.teleport_press`) steps it up, but it is off by default until more people are measured.
+**One agent click after a human filled the form** (also real): the transfer was **allowed**. A rule that judges a single click (`mot.teleport_press`) was added for it and now steps that capture up; it is on by default, ahead of measurements on trackpads and remote desktop.
 
 Synthetic, not in a browser: a human session followed by an agent takeover is `agent` in 500/500 seeds. **And the one that gets through:** a humanized agent using log-normal delays and overlapping key presses scores `human`. That is why `critical` exists.
 
@@ -48,7 +48,7 @@ Full method, synthetic sweeps, signal probes and cost: [docs/RESULTS.md](docs/RE
 ```bash
 npm install
 npm run build
-npm test          # 66 unit tests: rules, scoring soundness, server over real HTTP
+npm test          # 69 unit tests: rules, scoring soundness, server over real HTTP
 npm run test:browser   # 15 collector tests in real Chromium
 npm run demo      # fictional bank at http://localhost:8787 with a live session panel
 npm run attack    # the attack scenarios above (needs Playwright's Chromium, or CHROMIUM_PATH=/path/to/chrome)
@@ -109,7 +109,8 @@ All 34 rules with thresholds and known false-positive sources: [docs/RULES.md](d
 | [ROADMAP](docs/ROADMAP.md) | What is implemented, what is not, and the production-readiness checklist |
 | [CALIBRATION](docs/CALIBRATION.md) | Shadow mode and per-rule false-positive targets |
 | [INTEGRATION](docs/INTEGRATION.md) | Wiring it into a real app and backend |
-| [PRIVACY](docs/PRIVACY.md) | What is and isn't collected; legal notes |
+| [PRIVACY](docs/PRIVACY.md) | What is and isn't collected |
+| [LEGAL-REVIEW](docs/LEGAL-REVIEW.md) | Engineering review of the privacy and legal position (EU, UK, US), with a deployer checklist and questions for counsel. Not legal advice |
 | [CLAUDE.md](CLAUDE.md) | Instructions for coding agents working in this repo, including how to record decisions |
 
 ## Known limits

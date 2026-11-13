@@ -55,15 +55,18 @@ Timestamps are local time with the UTC offset. D1–D11 were written before this
 | D25 | One printable keydown pays for one `insertText` | 2026-11-12 00:33 EST | active |
 | D26 | Request hygiene, bounded cost, bounded memory | 2026-11-12 00:34 EST | active |
 | D27 | Collector transport: serialised flush, re-open, fail closed | 2026-11-12 00:36 EST | active |
-| D28 | Considered in the 2026-11-12 review and deliberately not done | 2026-11-12 00:40 EST | open questions |
+| D28 | Considered in the 2026-11-12 review and deliberately not done | 2026-11-12 00:40 EST | open questions; block-vs-step-up resolved by D38 |
 | D29 | The SDK signals step-up; performing it is the integrator's | 2026-11-12 04:10 EST | active |
 | D30 | Rate limiting is not a product feature | 2026-11-12 04:10 EST | active |
 | D31 | Presses on a native `<select>` are not button holds | 2026-11-12 04:14 EST | active |
 | D32 | `mot.no_coalesced` fires on a real human: what to do with it | 2026-11-12 04:14 EST | **open question** |
-| D33 | `mot.teleport_press`: judge a single click on its own | 2026-11-12 04:20 EST | active, **experimental (off by default)** |
+| D33 | `mot.teleport_press`: judge a single click on its own | 2026-11-12 04:20 EST | active; default changed by D37 |
 | D34 | Security review of the v0.3 commit: three findings | 2026-11-12 11:43 EST | active; items 1 and 3 refined by D35 |
 | D35 | Second review: in-mask script events become a marker; anonymous tokens are not remembered | 2026-11-12 11:47 EST | active |
 | D36 | CI browser job pinned to Ubuntu 24.04 | 2026-11-12 21:32 EST | active |
+| D37 | `mot.teleport_press` is on by default | 2026-11-12 22:35 EST | active |
+| D38 | Block or step-up on Tier 1 is the deployment's setting (`onTier1`) | 2026-11-12 22:35 EST | active |
+| D39 | Privacy and legal review; the product never recognises a person | 2026-11-12 22:35 EST | active |
 
 ## D1. Detect and respond per action, don't block sessions
 
@@ -451,3 +454,43 @@ The review's one-paragraph conclusion: **the server trusted the shape of the cli
 - **How it was decided:** from the error text. **Not verified:** the fix has not been run, and the browser tests have never run on Playwright's bundled Chromium, only on Chrome for Testing 158 through `CHROMIUM_PATH`. The next CI run is the first real check of both.
 - **Consequences / cost:** the runner image will eventually be retired by GitHub. The pin must move with the Playwright version.
 - **Revisit when:** Playwright is upgraded, or GitHub announces the end of the 24.04 image.
+
+---
+
+# 2026-11-12, later: maintainer decisions and the privacy and legal review
+
+## D37. `mot.teleport_press` is on by default
+
+- **Decided:** 2026-11-12 22:35 EST · **By:** the maintainer ("turn on"); implemented and recorded by Claude (`claude-fable-5-2`) · **Status:** active. **Supersedes the "experimental, off by default" part of D33.** The rule itself is unchanged.
+- **Context:** D33 shipped the rule off, following the project's own practice for anything not calibrated on real humans, and recommended switching it on after a trackpad tap-to-click capture. The maintainer decided to switch it on now.
+- **Chosen:** `experimental` removed. A single click with no pointer travel and no button hold is now `suspect` on its own (45 points), so `step_up` on `high`.
+- **Why:** the case it covers, one agent click after a person filled the form, was seen for real and let a transfer through. The worst a false positive does is ask for a step-up.
+- **How it was decided:** maintainer's call. Evidence at the time: one real human, 17 clicks, 0 fires; Claude in Chrome, 11 clicks, 11 fires; 3,000 synthetic human sessions, 0 fires. **Not measured, and the reason D33 held back:** trackpad tap-to-click, remote desktop, assistive tools that warp the pointer and click instantly. This is a knowing exception to "uncalibrated rules ship off".
+- **Consequences / cost:** harness scenario I (short robotic session) is now `suspect` (45) instead of `unknown`; the decision is `step_up` either way. Scenario B gains the hit (95). If real users on some device do produce this pattern, they will be stepped up on `high` actions until the rule is disabled for them (`scoreConfig.disabled`).
+- **Revisit when:** the first captures from trackpad and remote-desktop users are in. If it fires on them, make it device-class specific or move it back to experimental.
+
+## D38. Block or step-up on Tier 1 is the deployment's setting (`onTier1`)
+
+- **Decided:** 2026-11-12 22:35 EST · **By:** the maintainer ("make this configurable, it will be based on whoever is using it"); designed and recorded by Claude (`claude-fable-5-2`) · **Status:** active. **Resolves the first row of D28.**
+- **Context:** every Tier 1 hit blocked on `medium` and above. D28 questioned that for `evt.untrusted`, which fires on scripts the customer chose to run (keyboard-navigation and voice-control extensions, form fillers) as well as on agents: a person passes a step-up, and is locked out by a block.
+- **Options considered:** (a) change the default for `evt.untrusted` to step-up; (b) split Tier 1 into two fixed classes; (c) leave the default and let the deployment choose, overall and per rule.
+- **Chosen:** (c). `onTier1: { default?: 'block' | 'step_up', rules?: { [ruleId]: 'block' | 'step_up' } }`. The default stays `block` for every rule, so nothing changes for an existing deployment. If several Tier 1 rules fired, one that blocks is enough to block. `low` is unaffected (never blocked, still alerts). Latched Tier 1 hits follow the same setting.
+- **Fails closed:** an invalid value, an unknown rule id or a Tier 2 rule id throws at startup; inside `decide()`, anything that is not exactly `'step_up'` reads as `block`.
+- **Why:** how much lockout risk to trade for how much prompt-fatigue risk is a business and accessibility judgement that differs by bank and by country (see `LEGAL-REVIEW.md` on automated decisions). The SDK should not make it for them.
+- **How it was decided:** tests written first: `Tier 1 response is configurable per rule…`, `Tier 1 response: anything unrecognised blocks…`, `onTier1: validated at startup, then applied to decisions`.
+- **Recommendation, not a default:** `{ rules: { 'evt.untrusted': 'step_up' } }` for most deployments, keeping the automation-environment rules (`env.*`) on block.
+- **Consequences / cost:** a deployment can now set `default: 'step_up'` and never block anything, which leans entirely on its step-up being sound. A step-up prompt that appears while an agent is driving the browser can be approved by a tired human; block avoids that.
+
+## D39. Privacy and legal review; the product never recognises a person
+
+- **Decided:** 2026-11-12 22:35 EST · **By:** Claude (`claude-fable-5-2`), at the maintainer's request ("check privacy and legal review") · **Status:** active. An engineering review, **not legal advice**; roadmap P0 #5 now needs counsel, not more engineering.
+- **What was done:** the collector source was audited against every claim in `PRIVACY.md` (all hold), and the processing was mapped to GDPR/UK GDPR, ePrivacy, the EU AI Act, the European Accessibility Act, BIPA, the CCPA and its automated-decision rules, and US wiretap law, using public sources checked on the day. Written up in `docs/LEGAL-REVIEW.md` with sources, a checklist for deployers and questions for counsel.
+- **Chosen (the one decision in it):** a new non-negotiable rule: the product must never recognise a person. No per-user behavioural template, no comparison against a stored profile, no linking across sessions. The legal position under GDPR Art. 9 and the US biometric statutes depends on that purpose.
+- **Findings:**
+  - No content leaves the browser, as claimed. Three minimisation gaps: tag names of injected nodes can name an installed extension; the GPU renderer string is a fingerprint component; the stored session id is unnecessary when `bind` is set. Recommended, not built.
+  - Least settled legal point: whether EU consent is needed for the device reads and the session id (ePrivacy Art. 5(3)).
+  - Highest avoidable risk: offering this as a hosted service. On the bank's own servers it is first-party processing with no contents; hosted, it starts to look like the session-replay tools that are being sued.
+  - A `block` made by rules alone is harder to defend than a `step_up` (GDPR Art. 22, California ADMT rules). D38 makes that a setting.
+- **How it was decided:** code audit by search of every DOM and navigator read in `src/client/`; eleven web searches. Several legal points rest on secondary sources or general knowledge and are marked as such in the document. **Not verified:** the final text of the Payment Services Regulation, the EU AI Act's fraud-detection carve-out, national regulator positions, any case law beyond summaries.
+- **Consequences / cost:** none in code. The roadmap item for a decision-model layer (P3) and any future "does this match the customer's usual behaviour" idea now need a new legal analysis first.
+- **Revisit when:** counsel has reviewed it; the Payment Services Regulation and the Digital Omnibus are final; the EDPB or a national authority publishes on behavioural biometrics.

@@ -85,9 +85,11 @@ test('environment flags are monotonic: a later "clean" snapshot cannot erase an 
 // ───────────── "human" needs evidence that rules could actually test ─────────────
 
 test('a short robotic session is "unknown", not "human": no rule had enough samples to clear it', () => {
-  const r = scoreTrace(shortRobot());
+  // the evidence floor on its own (the per-click rule would also catch this one; see the next assertion)
+  const r = scoreTrace(shortRobot(), { disabled: ['mot.teleport_press'] });
   assert.equal(r.verdict, 'unknown');
   assert.equal(decide(r, 'high'), 'step_up');
+  assert.equal(scoreTrace(shortRobot()).verdict, 'suspect', 'by default its teleport-press clicks are caught too');
 });
 
 test('no environment snapshot means never "human" (the env checks were never reported)', () => {
@@ -278,18 +280,18 @@ function addClick(tr: SessionTrace, at: number, x: number, y: number, hold: numb
 }
 const endOf = (tr: SessionTrace) => Math.max(...tr.click.map((c) => c.t), ...tr.key.map((k) => k.t));
 
-test('one teleport-press click at the end of a human session is caught (experimental mot.teleport_press)', () => {
+test('one teleport-press click at the end of a human session is caught by default (mot.teleport_press, D37)', () => {
   const tr = T.humanSession(41);
   const end = endOf(tr);
   tr.ptr.push({ t: end + 500, x: 1652, y: 1, c: 1, tr: 1, pt: 'mouse' });                // the person's mouse leaves the page for the agent's side panel…
   addClick(tr, end + 40000, 900, 120, 1, 0, { re: true });                                // …40 s later the pointer "re-enters" exactly on the button and clicks in 1 ms
-  const r = scoreTrace(tr, TP);
+  const r = scoreTrace(tr);                                                               // no configuration: on by default
   assert.ok(r.hits.some((h) => h.id === 'mot.teleport_press'), 'rule fired');
   assert.equal(r.verdict, 'suspect');
   assert.equal(decide(r, 'high'), 'step_up');
   assert.equal(decide(r, 'low'), 'allow');
-  // experimental: off unless enabled, like every uncalibrated rule
-  assert.equal(scoreTrace(tr).verdict, 'human');
+  // a deployment that sees false positives from it can switch it off
+  assert.equal(scoreTrace(tr, { disabled: ['mot.teleport_press'] }).verdict, 'human');
 });
 
 test('mot.teleport_press needs BOTH halves: no travel and no hold, on the same click', () => {
@@ -337,4 +339,34 @@ test('a script acting inside a masked region is counted by evt.untrusted through
   assert.ok(r.hits.some((h) => h.id === 'evt.untrusted'));
   assert.equal(extractFeatures(tr).untrustedMasked, 1);
   assert.equal(sanitizeBatch({ dom: [{ t: 1, kind: 'script-in-mask', tag: 'x', by: 'page' }] }).dom!.length, 1);
+});
+
+// ───────────── what hard evidence does is the deployment's choice (D38) ─────────────
+
+test('Tier 1 response is configurable per rule: block by default, step-up where the deployment says so', () => {
+  const scripted = T.humanSession(45);
+  scripted.input.push({ t: 99000, it: 'insertText', tr: 0, kd: -1, comp: 0, bg: 0 });       // evt.untrusted
+  const r = scoreTrace(scripted);
+  assert.ok(r.hits.some((h) => h.id === 'evt.untrusted'));
+  assert.equal(decide(r, 'high'), 'block', 'default is unchanged');
+  const lenient = { rules: { 'evt.untrusted': 'step_up' as const } };
+  assert.equal(decide(r, 'high', lenient), 'step_up');
+  assert.equal(decide(r, 'medium', lenient), 'step_up');
+  assert.equal(decide(r, 'critical', lenient), 'step_up');
+  assert.equal(decide(r, 'low', lenient), 'notify', 'low is never blocked and still alerts');
+
+  // a second Tier 1 rule that still blocks wins
+  const both = scoreTrace(Object.assign(scripted, { env: T.cleanEnv({ webdriver: true }) }));
+  assert.equal(decide(both, 'high', lenient), 'block');
+  assert.equal(decide(both, 'high', { default: 'step_up' }), 'step_up', 'a deployment can make every Tier 1 rule step up');
+  assert.equal(decide(both, 'high', { default: 'step_up', rules: { 'env.webdriver': 'block' } }), 'block');
+});
+
+test('Tier 1 response: anything unrecognised blocks (the strict reading)', () => {
+  const tr = T.humanSession(46);
+  tr.dom.push({ t: 10, kind: 'canary-click' });
+  const r = scoreTrace(tr);
+  for (const bad of [{ default: 'allow' }, { rules: { 'dom.canary': 'nope' } }, { rules: { 'dom.canary': undefined } }, null, 'step_up']) {
+    assert.equal(decide(r, 'high', bad as any), 'block', JSON.stringify(bad));
+  }
 });

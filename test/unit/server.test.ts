@@ -350,6 +350,21 @@ test('anonymous tokens (anyone can mint them) take no room in the replay cache, 
   } finally { b.close(); }
 });
 
+test('onTier1: validated at startup, then applied to decisions', async () => {
+  assert.throws(() => createAgentDetect({ secret: SECRET, onTier1: { default: 'allow' as any } }), /onTier1/);
+  assert.throws(() => createAgentDetect({ secret: SECRET, onTier1: { rules: { 'dom.canary': 'maybe' as any } } }), /onTier1/);
+  assert.throws(() => createAgentDetect({ secret: SECRET, onTier1: { rules: { 'dom.canry': 'step_up' } } }), /dom\.canry/, 'a typo in a rule id must not silently leave it blocking or not');
+  assert.throws(() => createAgentDetect({ secret: SECRET, onTier1: { rules: { 'mot.jump_arrival': 'step_up' } } }), /Tier 1/, 'only Tier 1 rules have a response');
+  const b = await boot({ onTier1: { rules: { 'dom.canary': 'step_up' } } });
+  try {
+    const s = await b.open();
+    await b.post('/ad/collect', smallBatch(s, 1, { dom: [{ t: 30, kind: 'canary-click' }] }));
+    assert.equal((await b.post('/ad/decide', { ...s, action: 'transfer' })).json.decision, 'step_up');
+    await b.post('/ad/collect', smallBatch(s, 2, { env: T.cleanEnv({ webdriver: true }) }));
+    assert.equal((await b.post('/ad/decide', { ...s, action: 'transfer' })).json.decision, 'block', 'a rule left on block still blocks');
+  } finally { b.close(); }
+});
+
 test('per-session memory is bounded by the stream caps', async () => {
   const b = await boot();
   try {

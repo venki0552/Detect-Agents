@@ -169,8 +169,8 @@ export const RULES: Rule[] = [
         ? `${f.jumpArrivalClicks}/${f.motionClicks} clicks arrived by teleport` : null,
   },
   {
-    id: 'mot.teleport_press', tier: 2, category: 'motion', weight: 45, experimental: true,
-    description: 'On one click, the pointer appeared at the target in a single jump (or without ever moving) AND the button was released within 8 ms of being pressed: no travel and no hold. A single click is enough, so it covers one robotic action after a human did everything else. Measured in real Chrome: Claude in Chrome 11/11 clicks, one real human 0/17. Needs more humans (trackpad tap-to-click, remote desktop) before it is on by default.',
+    id: 'mot.teleport_press', tier: 2, category: 'motion', weight: 45,
+    description: 'On one click, the pointer appeared at the target in a single jump (or without ever moving) AND the button was released within 8 ms of being pressed: no travel and no hold. A single click is enough, so it covers one robotic action after a human did everything else. Measured in real Chrome: Claude in Chrome 11/11 clicks, one real human 0/17. On by default by the maintainer\'s decision (D37); not yet measured on trackpad tap-to-click or remote desktop.',
     test: (f) => (f.teleportPresses >= 1 ? `${f.teleportPresses} click${f.teleportPresses === 1 ? '' : 's'} with no pointer travel and no button hold` : null),
   },
   {
